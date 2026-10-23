@@ -16,6 +16,9 @@ func _initialize() -> void:
     test_reset_transaction()
     test_queue_and_seats()
     test_rush_rules_and_recovery()
+    test_career_patience()
+    test_career_demand()
+    test_calm_throughput_matrix()
     test_rush_balance_matrix()
     test_ten_minutes()
     print("Restaurant acceptance tests: %d checks, %d failures" % [checks, errors])
@@ -171,9 +174,9 @@ func test_ten_minutes() -> void:
         if second == 300:
             model.buy("drive")
         expect(model.money >= 0 and model.grill_stock >= 0 and model.counter_stock >= 0, "Ten-minute economy remains nonnegative")
-        expect(model.queue.size() <= 8 + int(model.upgrades.table), "Queue stays bounded")
+        expect(model.queue.size() <= model.queue_capacity(), "Queue stays bounded")
     expect(model.sold > sales_at_start + 50, "Ten-minute automated run makes sustained progress")
-    expect(minimum_window_sales > 0, "Every minute has fulfilled customers: no queue or worker deadlock")
+    expect(minimum_window_sales >= 9, "Every minute retains at least nine sales with no queue or worker deadlock")
     expect(model.upgrades.drive == 1, "Earned progression reaches drive-through")
     print("Ten-minute run: %d additional sales, $%d cash, minimum %d sales/minute" % [model.sold-sales_at_start,model.money,minimum_window_sales])
 
@@ -272,8 +275,9 @@ func test_rush_rules_and_recovery() -> void:
     model.counter_stock = 2
     model.counter_fries = 0
     var cash: int = model.money
+    var combo_sales_before: int = model.sold
     model._sell(false)
-    expect(model.sold == 36 and model.counter_stock == 2 and model.money == cash, "Combo without fries neither consumes burger nor pays ghost money")
+    expect(model.sold == combo_sales_before and model.counter_stock == 2 and model.money == cash, "Combo without fries neither consumes burger nor pays ghost money")
     model.counter_fries = 1
     var before_sales: int = model.sold
     model._sell(false)
@@ -310,8 +314,9 @@ func test_rush_rules_and_recovery() -> void:
     expect(fryer.counter_fries > 0 and fryer.counter_stock == 0, "Fryer assignment physically produces and delivers fries instead of burgers")
     expect(not fryer.assign_staff(0,"drive"), "Inappropriate cook assignment rejected")
     fryer.assign_staff(0,"grill")
+    var fryer_sales: int = fryer.sold
     fryer.step(25)
-    expect(fryer.counter_stock > 0 or fryer.sold > 36, "Grill reassignment produces burgers and restores service")
+    expect(fryer.counter_stock > 0 or fryer.sold > fryer_sales, "Grill reassignment produces burgers and restores service")
     # Full-counter rescue conserves carried cargo and breaks either ingredient jam.
     for explicit in [false, true]:
         var rescue: RefCounted = rush_fixture(0)
@@ -378,6 +383,10 @@ func test_rush_rules_and_recovery() -> void:
     for customer in challenge.queue:
         cleared = cleared and not customer.get("rush_order",false) and not customer.get("special",false) and not customer.get("combo",false)
     expect(cleared, "Failed rush clears special and combo blockers from remaining promoted demand")
+    var calm_reset := true
+    for customer in challenge.queue:
+        calm_reset = calm_reset and customer.patience == challenge.calm_patience() and customer.max_patience == challenge.calm_patience()
+    expect(calm_reset, "Rush survivors receive the full calm patience allowance")
     var recovery_sales: int = challenge.sold
     challenge.step(40)
     expect(challenge.sold > recovery_sales and challenge.start_rush(), "Calm economy recovers and retry remains free")
@@ -496,3 +505,158 @@ func test_reset_transaction() -> void:
     DirAccess.remove_absolute(sentinel)
     DirAccess.remove_absolute(blocked)
     DirAccess.remove_absolute(root)
+
+func test_career_patience() -> void:
+    for tables in [0, 4]:
+        var model := Restaurant.new()
+        model.upgrades.table = tables
+        model.queue.clear()
+        model._spawn_customer()
+        var customer: Dictionary = model.queue[0]
+        var window: float = 45.0 + tables * 5.0
+        expect(customer.patience == window and customer.max_patience == window, "Calm patience includes generous table allowance")
+        customer.position = customer.target
+        model.step(1)
+        expect(is_equal_approx(customer.patience, window - 1), "Settled calm patience counts down exactly once per tick")
+        model.queue.clear()
+        model.queue.append(customer)
+        customer.patience = 0.05
+        customer.position = Vector2(650, 940)
+        model.step(0.1)
+        expect(model.queue.size() == 1 and customer.patience == 0.05 and model.lost == 0, "Walking arrivals cannot expire before reaching their queue position")
+        customer.position = customer.target
+        model.step(0.1)
+        expect(model.queue.is_empty() and model.lost == 1 and model.money == 0 and model.sold == 0, "Calm departure records one loss without payment or sale")
+        expect(model.notice.contains("left"), "Calm departure supplies visible feedback")
+    var unattended := Restaurant.new()
+    unattended.step(60)
+    expect(unattended.lost > 0 and unattended.money == 0 and unattended.sold == 0, "Natural unattended calm queue loses customers without income")
+    var service := Restaurant.new()
+    service.queue.clear()
+    service._spawn_customer()
+    service.queue[0].position = service.queue[0].target
+    service.queue[0].patience = 0.05
+    service.player = Restaurant.COUNTER
+    service.target = service.player
+    service.counter_stock = 3
+    service.serve_progress = 0.99
+    service.step(0.1)
+    expect(service.lost == 1 and service.sold == 0 and service.counter_stock == 3 and service.money == 0, "Expiry precedes ready service without consuming food or paying")
+    var reflow := Restaurant.new()
+    reflow.queue.clear()
+    reflow._spawn_customer()
+    reflow._spawn_customer()
+    reflow._spawn_customer()
+    reflow.step(0.1)
+    reflow.queue[0].position = reflow.queue[0].target
+    reflow.queue[0].patience = 0.05
+    reflow.queue[1].position = reflow.queue[1].target
+    reflow.queue[1].patience = 0.05
+    var follower: Dictionary = reflow.queue[2]
+    follower.position = follower.target
+    reflow.step(0.1)
+    var remaining: float = follower.patience
+    reflow.step(0.1)
+    expect(reflow.queue.size() == 1 and follower.patience == remaining, "Reflowed follower retains patience while walking towards the newly vacant position")
+    var state: Dictionary = unattended.snapshot()
+    var loaded := Restaurant.new()
+    expect(loaded.restore(state) and loaded.lost == unattended.lost, "Calm lost counter survives save roundtrip")
+    state.erase("lost")
+    expect(loaded.restore(state) and loaded.lost == 0, "Existing version-two saves default missing lost counter to zero")
+    var baseline: Dictionary = loaded.snapshot()
+    for invalid in [-1, 0.5, "1", true, INF, NAN]:
+        var corrupt: Dictionary = baseline.duplicate(true)
+        corrupt.lost = invalid
+        expect(not loaded.restore(corrupt) and loaded.snapshot() == baseline, "Invalid calm lost counter is rejected transactionally")
+    var rush_model: RefCounted = rush_fixture(0)
+    rush_model.queue.clear()
+    rush_model._spawn_customer()
+    rush_model.queue[0].position = rush_model.queue[0].target
+    expect(rush_model.start_rush() and rush_model.queue[0].max_patience == 30.0, "Career rush retains thirty-second patience")
+    var rush_customer: Dictionary = rush_model.queue[0]
+    rush_model.step(1)
+    expect(is_equal_approx(rush_customer.patience, 29.0), "Settled career rush patience counts down once")
+    rush_customer.patience = 0.05
+    rush_customer.position = Vector2(650, 940)
+    rush_model.step(0.1)
+    expect(rush_customer.patience == 0.05 and rush_model.rush.lost == 0, "Career rush arrivals also retain patience while walking")
+    rush_customer.position = rush_customer.target
+    var money_before: int = rush_model.money
+    var sales_before: int = rush_model.sold
+    var calm_lost_before: int = rush_model.lost
+    rush_model.step(0.1)
+    expect(rush_model.rush.lost == 1 and rush_model.lost == calm_lost_before and rush_model.money == money_before and rush_model.sold == sales_before, "Rush departure increments only rush losses and cannot pay")
+
+func test_career_demand() -> void:
+    var model := Restaurant.new()
+    var previous_gap := INF
+    for sales in range(301):
+        model.sold = sales
+        var gap: float = model.calm_arrival_gap()
+        expect(gap < previous_gap, "Every sale through 300 strictly raises calm demand")
+        previous_gap = gap
+    model.sold = 0
+    expect(is_equal_approx(model.calm_arrivals_per_minute(), 18.0), "Fresh career demand is eighteen arrivals per minute")
+    model.sold = 150
+    expect(is_equal_approx(model.calm_arrivals_per_minute(), 30.0), "Mid-career demand is thirty arrivals per minute")
+    model.sold = 300
+    model.upgrades.table = 4
+    expect(is_equal_approx(model.calm_arrivals_per_minute(), 48.0), "Mature demand reaches forty-eight arrivals per minute")
+    var capped_gap: float = model.calm_arrival_gap()
+    model.sold = 100000
+    expect(model.calm_arrival_gap() == capped_gap and model.queue_capacity() == 14, "Sales beyond three hundred cannot exceed demand or queue caps")
+    for drive in [0, 1]:
+        model.upgrades.drive = drive
+        model.queue.clear()
+        while model.queue.size() < model.queue_capacity():
+            model._spawn_customer()
+        model.step(1)
+        var visible := true
+        for customer in model.queue:
+            visible = visible and customer.target.x >= 42 and customer.target.x <= 678 and customer.target.y <= 940
+        expect(model.queue.size() <= 14 and visible, "Fourteen-customer counter or mixed queue remains bounded and visible")
+    var register_low: RefCounted = rush_fixture(0)
+    var register_high := Restaurant.new()
+    expect(register_high.restore(register_low.snapshot()), "Register comparison restores identical career team")
+    register_high.money = 100000
+    while register_high.upgrades.register < 3:
+        register_high.buy("register")
+    expect(register_low.start_rush() and register_high.start_rush() and register_low.rush.goal == register_high.rush.goal, "Buying registers cannot raise career rush targets")
+
+func test_calm_throughput_matrix() -> void:
+    # Controlled mature balance fixtures, with no extra inventory during the run.
+    for explicit in [false, true]:
+        for stocked in [false, true]:
+            var model: RefCounted = rush_fixture(2)
+            model.sold = 300
+            model.player = Vector2(350, 900)
+            model.target = model.player
+            model.grill_stock = 18 if stocked else 0
+            model.fries_stock = 18 if stocked else 0
+            model.counter_stock = 30 if stocked else 0
+            model.counter_fries = 30 if stocked else 0
+            model.carried = 0
+            model.fries_carried = 0
+            if explicit:
+                for worker in 3:
+                    expect(model.assign_staff(worker, "fries" if worker == 2 else "grill"), "Mature cooks accept deliberate ingredient split")
+                expect(model.assign_staff(3, "counter") and model.assign_staff(4, "drive"), "Mature cashiers accept deliberate lane split")
+            var peak_queue := 0
+            var bounded := true
+            var minutes: Array[int] = []
+            var previous_sales: int = model.sold
+            for second in 600:
+                # Observe the queue each simulation step without thousands of assertions.
+                for frame in 10:
+                    model.step(0.1)
+                    peak_queue = maxi(peak_queue, model.queue.size())
+                    bounded = bounded and model.queue.size() <= model.queue_capacity()
+                if second % 60 == 59:
+                    minutes.append(model.sold - previous_sales)
+                    previous_sales = model.sold
+            expect(bounded, "Mature calm queues stay inside their advertised capacity")
+            if explicit:
+                expect(minutes.min() >= 45 and peak_queue < 14 and model.lost == 0, "Assigned mature team sustains forty-five sales every minute without capped queues or losses")
+            else:
+                expect(model.sold > 300 and minutes.min() > 0, "Auto staff continue serving despite mature congestion")
+            print("Calm matrix assigned=%s stocked=%s sales=%d minutes=%s peak_queue=%d lost=%d" % [explicit,stocked,model.sold-300,minutes,peak_queue,model.lost])

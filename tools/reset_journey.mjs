@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 
-const modelKeys=['elapsed','money','sold','player','carried','fries_carried','grill_stock','counter_stock','fries_stock','counter_fries','combo_served','boss_actions','boss_cooldown','upgrades','staff','queue','rush'];
+const modelKeys=['elapsed','money','sold','lost','player','carried','fries_carried','grill_stock','counter_stock','fries_stock','counter_fries','combo_served','boss_actions','boss_cooldown','upgrades','staff','queue','rush'];
 const checkpoint=state=>Object.fromEntries(modelKeys.map(key=>[key,state[key]]));
 
 // Every action goes through real canvas input. Existing progression is earned
@@ -31,6 +31,7 @@ export async function runResetJourney({page,tap,name,initial}) {
   const assertFresh=state=>{
     assert.equal(state.money,0,'start over clears money');
     assert.equal(state.sold,0,'start over clears sales');
+    assert.equal(state.lost,0,'start over clears lost customers');
     assert.deepEqual(state.upgrades,initial.upgrades,'start over restores the starting equipment');
     assert.equal(state.staff.length,0,'start over removes all hired workers');
     for(const key of ['carried','fries_carried','grill_stock','counter_stock','fries_stock','counter_fries','combo_served','boss_actions']) {

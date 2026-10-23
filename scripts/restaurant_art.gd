@@ -2,6 +2,8 @@ extends Node2D
 ## Original vector art: chunky furniture, soft shadows and animated little people.
 var model
 var clock := 0.0
+# Short-lived ghosts never enter the queue, save file or deterministic simulation.
+var departures: Array[Dictionary] = []
 const INK := Color("294743")
 const SKINS := [Color("efb58d"), Color("ad7055"), Color("f7cfaa"), Color("ce8d65")]
 const SHIRTS := [Color("e37355"), Color("849ec2"), Color("d4a84d"), Color("a58ebd"), Color("5c9f8d")]
@@ -43,7 +45,7 @@ func fries(at: Vector2, factor: float = 1.0) -> void:
     box(Rect2(at + Vector2(-16, -13) * factor, Vector2(32, 21) * factor), Color("cb6b43"), 4)
     draw_line(at + Vector2(-5, -7) * factor, at + Vector2(5, -7) * factor, Color("ffe7ae"), 3 * factor)
 
-func person(at: Vector2, shirt: Color, skin: Color, role: String, moving: bool, carry: int = 0, carry_kind: String = "burger", side_carry: int = 0) -> void:
+func person(at: Vector2, shirt: Color, skin: Color, role: String, moving: bool, carry: int = 0, carry_kind: String = "burger", side_carry: int = 0, sad: bool = false) -> void:
     ellipse(at + Vector2(0, 5), Vector2(23, 9), Color(0.12, 0.25, 0.22, 0.16))
     var bounce := sin(clock * 12 + at.x) * 2.0 if moving else sin(clock * 2 + at.x) * 0.7
     var pos := at + Vector2(0, bounce)
@@ -66,7 +68,10 @@ func person(at: Vector2, shirt: Color, skin: Color, role: String, moving: bool, 
         box(Rect2(pos + Vector2(-21, -77), Vector2(42, 10)), Color("ffcf68"), 4)
     draw_circle(pos + Vector2(-7, -58), 2, INK)
     draw_circle(pos + Vector2(7, -58), 2, INK)
-    draw_arc(pos + Vector2(0, -53), 6, 0.2, 2.9, 10, Color("a7604a"), 1.5, true)
+    if sad:
+        draw_arc(pos + Vector2(0, -46), 6, PI + 0.2, TAU - 0.2, 10, Color("a7604a"), 1.5, true)
+    else:
+        draw_arc(pos + Vector2(0, -53), 6, 0.2, 2.9, 10, Color("a7604a"), 1.5, true)
     if carry > 0:
         box(Rect2(pos + Vector2(8, -30), Vector2(37, 7)), Color("d9dccc"), 3)
         for i in range(mini(carry, 4)):
@@ -177,6 +182,8 @@ func _draw() -> void:
     for worker in model.staff:
         actors.append({"pos":worker.position,"role":worker.role,"moving":worker.state.begins_with("walking") or worker.state.begins_with("carrying"),"carry":worker.carried,"kind":worker.carry_kind,"sides":0,"id":0})
     actors.append({"pos":model.player,"role":"you","moving":model.player.distance_to(model.target) > 3,"carry":model.carried,"kind":"burger","sides":model.fries_carried,"id":0})
+    for departure in departures:
+        actors.append({"pos":departure.position,"role":"customer","moving":true,"carry":0,"kind":"burger","sides":0,"id":departure.id,"sad":true})
     actors.sort_custom(func(a, b): return a.pos.y < b.pos.y)
     for actor in actors:
         var shirt: Color = SHIRTS[actor.id % SHIRTS.size()]
@@ -186,7 +193,10 @@ func _draw() -> void:
             shirt = Color("4b9b87")
         elif actor.role == "you":
             shirt = Color("e97051")
-        person(actor.pos, shirt, SKINS[actor.id % SKINS.size()], actor.role, actor.moving, actor.carry, actor.kind, actor.sides)
+        person(actor.pos, shirt, SKINS[actor.id % SKINS.size()], actor.role, actor.moving, actor.carry, actor.kind, actor.sides, actor.get("sad", false))
+        if actor.get("sad", false):
+            box(Rect2(actor.pos + Vector2(-33, -121), Vector2(66, 28)), Color("fff1d1"), 7)
+            text("Hungry", actor.pos + Vector2(-27, -101), 17, Color("a34e36"))
     var worker_numbers := {"cook":0,"cashier":0}
     for worker in model.staff:
         worker_numbers[worker.role] += 1
@@ -199,11 +209,11 @@ func _draw_orders() -> void:
     var head_burger := false
     var head_drive := false
     for customer in model.queue:
-        if model.challenge_patience or (customer.rush_order and model.rush.active):
+        if _shows_patience(customer):
             var remaining: float = clampf(customer.patience / maxf(1, customer.max_patience), 0, 1)
             var bar_at: Vector2 = customer.position + Vector2(20, -66)
             box(Rect2(bar_at, Vector2(30, 5)), Color("c5ccb8"), 2)
-            box(Rect2(bar_at, Vector2(maxf(1, 30 * remaining), 5)), Color("e06c4e") if remaining < 0.35 else Color("68a582"), 2)
+            box(Rect2(bar_at, Vector2(maxf(1, 30 * remaining), 5)), _patience_colour(remaining), 2)
         var drive: bool = customer.order == "drive"
         if (drive and head_drive) or (not drive and head_burger):
             continue
@@ -223,9 +233,32 @@ func _draw_orders() -> void:
         if customer.combo:
             text("+", at + Vector2(41, icon_y - 4), 17)
             fries(at + Vector2(65, icon_y - 2), 0.55)
-        if model.challenge_patience or (customer.rush_order and model.rush.active):
+        if _shows_patience(customer):
             var remaining: float = clampf(customer.patience / maxf(1, customer.max_patience), 0, 1)
             var width := 129.0 if special else 72.0
             var bar_y := 84 if special else 58
             box(Rect2(at + Vector2(7, bar_y), Vector2(width, 5)), Color("d7d5be"), 2)
-            box(Rect2(at + Vector2(7, bar_y), Vector2(maxf(1, width * remaining), 5)), Color("e06c4e") if remaining < 0.35 else Color("68a582"), 2)
+            box(Rect2(at + Vector2(7, bar_y), Vector2(maxf(1, width * remaining), 5)), _patience_colour(remaining), 2)
+
+func _patience_colour(remaining: float) -> Color:
+    if model.challenge_patience:
+        return Color("e06c4e") if remaining < 0.35 else Color("68a582")
+    return Color("e06c4e") if remaining <= 0.2 else (Color("d49a39") if remaining <= 0.5 else Color("68a582"))
+
+func _shows_patience(customer: Dictionary) -> bool:
+    return model != null and customer.has("patience")
+
+func present_departure(customer: Dictionary) -> void:
+    departures.append({"id":int(customer.id),"position":customer.position,"age":0.0})
+
+func step_departures(delta: float) -> void:
+    for departure in departures:
+        departure.age += delta
+        departure.position = departure.position.move_toward(Vector2(360, 960), delta * 175)
+    departures = departures.filter(func(departure): return departure.age < 3.5 and departure.position.y < 954)
+
+func departure_telemetry() -> Array[Dictionary]:
+    var result: Array[Dictionary] = []
+    for departure in departures:
+        result.append({"id":departure.id,"x":departure.position.x,"y":departure.position.y,"age":departure.age,"sad":true})
+    return result

@@ -4,7 +4,14 @@ signal sale_completed(customer: Dictionary)
 signal customer_abandoned(customer: Dictionary)
 
 # Challenge-only runtime flags; never serialized into career saves.
-var challenge_patience := false
+var challenge_patience := false:
+    set(value):
+        if value and not challenge_patience:
+            # Challenge sessions enable this flag after the initial queue is built.
+            for customer in queue:
+                customer.patience = 30.0
+                customer.max_patience = 30.0
+        challenge_patience = value
 var simulation_frozen := false
 
 const RushDirector = preload("res://scripts/rush_director.gd")
@@ -20,6 +27,7 @@ var player := Vector2(320, 750)
 var target := player
 var money := 0
 var sold := 0
+var lost := 0
 var grill_stock := 0
 var carried := 0
 var counter_stock := 0
@@ -52,6 +60,24 @@ func _init() -> void:
 
 func capacity() -> int:
     return 3 + int(upgrades.capacity) * 2
+
+func calm_patience() -> float:
+    return 30.0 if challenge_patience else 45.0 + 5.0 * float(upgrades.table)
+
+func calm_arrivals_per_minute() -> float:
+    if challenge_patience:
+        return 60.0 / calm_arrival_gap()
+    return 18.0 + 0.08 * float(mini(sold, 300)) + 1.5 * float(upgrades.table)
+
+func calm_arrival_gap() -> float:
+    if challenge_patience:
+        return maxf(1.8, 3.1 - float(upgrades.table) * 0.22)
+    return 60.0 / calm_arrivals_per_minute()
+
+func queue_capacity() -> int:
+    if challenge_patience:
+        return 8 + int(upgrades.table)
+    return mini(14, 8 + int(upgrades.table) + mini(sold, 300) / 150)
 
 func burger_value() -> int:
     return 12 + int(upgrades.value) * 4
@@ -128,6 +154,11 @@ func _tick(dt: float) -> void:
     elapsed += dt
     if challenge_patience:
         _tick_challenge_patience(dt)
+    else:
+        _update_queue_targets()
+        _tick_career_patience(dt)
+        # Departures advance the queue before service checks the next customer.
+        _update_queue_targets()
     boss_cooldown = maxf(0, boss_cooldown - dt)
     if boss_cooldown < 0.000001:
         boss_cooldown = 0
@@ -191,13 +222,23 @@ func _tick(dt: float) -> void:
     else:
         _drive_timer = 0
     _arrival += dt
-    var arrival_gap := maxf(1.8, 3.1 - float(upgrades.table) * 0.22)
+    var arrival_gap := calm_arrival_gap()
     if rush.active:
         arrival_gap = maxf(0.75, rush.duration / (float(rush.goal) * 1.65))
     if _arrival >= arrival_gap:
         _arrival = 0
-        if queue.size() < 8 + int(upgrades.table):
+        if queue.size() < queue_capacity():
             _spawn_customer()
+    _update_queue_targets()
+    for customer in queue:
+        customer.position = customer.position.move_toward(customer.target, dt * 125)
+    _tick_rush(dt)
+    for i in range(diners.size() - 1, -1, -1):
+        diners[i].time -= dt
+        if diners[i].time <= 0:
+            diners.remove_at(i)
+
+func _update_queue_targets() -> void:
     var normal_index := 0
     var drive_index := 0
     for customer in queue:
@@ -207,12 +248,21 @@ func _tick(dt: float) -> void:
         else:
             customer.target = Vector2(540, 550 + normal_index * 29)
             normal_index += 1
-        customer.position = customer.position.move_toward(customer.target, dt * 125)
-    _tick_rush(dt)
-    for i in range(diners.size() - 1, -1, -1):
-        diners[i].time -= dt
-        if diners[i].time <= 0:
-            diners.remove_at(i)
+
+func _tick_career_patience(dt: float) -> void:
+    for i in range(queue.size() - 1, -1, -1):
+        var customer: Dictionary = queue[i]
+        if customer.position.distance_to(customer.target) >= 18:
+            continue
+        customer.patience = maxf(0.0, float(customer.patience) - dt)
+        if customer.patience <= 0.000001:
+            if customer.get("rush_order", false):
+                rush.lost += 1
+            else:
+                lost += 1
+                notice = "A customer left hungry"
+            queue.remove_at(i)
+            customer_abandoned.emit(customer.duplicate(true))
 
 func allowed_assignments(index: int) -> Array:
     if index < 0 or index >= staff.size():
@@ -373,7 +423,8 @@ func _update_worker(worker: Dictionary, dt: float) -> void:
 
 func _spawn_customer() -> void:
     var is_drive: bool = upgrades.drive > 0 and _next_customer % 3 == 2
-    queue.append({"id":_next_customer,"order":"drive" if is_drive else "burger","position":Vector2(650, 940),"target":Vector2(540,550),"combo":upgrades.fries > 0 and _next_customer % (2 if rush.active else 3) == 1,"rush_order":rush.active,"patience":30.0,"max_patience":30.0,"special":rush.active and _next_customer % 4 == 2})
+    var patience := 30.0 if challenge_patience or rush.active else calm_patience()
+    queue.append({"id":_next_customer,"order":"drive" if is_drive else "burger","position":Vector2(650, 940),"target":Vector2(540,550),"combo":upgrades.fries > 0 and _next_customer % (2 if rush.active else 3) == 1,"rush_order":rush.active,"patience":patience,"max_patience":patience,"special":rush.active and _next_customer % 4 == 2})
     if queue.back().special:
         queue.back().combo = true
     _next_customer += 1
@@ -446,7 +497,7 @@ func start_rush() -> bool:
     if not reason.is_empty():
         notice = reason
         return false
-    rush.start(upgrades)
+    rush.start(upgrades, challenge_patience)
     _arrival = 0.0
     # Promote the people already waiting; a full calm queue never wastes the timer.
     for i in queue.size():
@@ -463,13 +514,6 @@ func _tick_rush(dt: float) -> void:
     if not rush.active:
         return
     rush.time_left = maxf(0, rush.time_left - dt)
-    for i in range(queue.size() - 1, -1, -1):
-        if not challenge_patience and queue[i].get("rush_order", false):
-            queue[i].patience -= dt
-            if queue[i].patience <= 0:
-                customer_abandoned.emit(queue[i].duplicate(true))
-                queue.remove_at(i)
-                rush.lost += 1
     if rush.achieved() or rush.time_left <= 0:
         rush.finish(burger_value())
         money += rush.reward
@@ -482,6 +526,9 @@ func _tick_rush(dt: float) -> void:
             customer.rush_order = false
             customer.combo = false
             customer.special = false
+            if not challenge_patience:
+                customer.patience = calm_patience()
+                customer.max_patience = calm_patience()
 
 func _unload_player(amount: int) -> void:
     var burgers_to_drop := mini(amount, mini(carried, 30 - counter_stock))
@@ -556,7 +603,7 @@ func snapshot() -> Dictionary:
                 staff_assignments.append(str(worker.get("assignment", "balanced")))
                 staff_reserve.append(int(worker.get("held_burgers", 0)))
                 staff_fries_reserve.append(int(worker.get("held_fries", 0)))
-    return {"rush_interrupted":rush.active,"staff_fries_reserve":staff_fries_reserve,"fries_stock":fries_stock,"counter_fries":counter_fries,"combo_served":combo_served,"boss_actions":boss_actions,"boss_cooldown":boss_cooldown,"mastery":{"rank":rush.rank,"wins":rush.wins,"best":rush.best},"staff_reserve":staff_reserve,"staff_kinds":staff_kinds,"staff_assignments":staff_assignments,"staff_loads":staff_loads,"version":2,"money":money,"sold":sold,"upgrades":upgrades.duplicate(),"grill_stock":grill_stock,"carried":carried,"counter_stock":counter_stock,"fries_carried":fries_carried}
+    return {"lost":lost,"rush_interrupted":rush.active,"staff_fries_reserve":staff_fries_reserve,"fries_stock":fries_stock,"counter_fries":counter_fries,"combo_served":combo_served,"boss_actions":boss_actions,"boss_cooldown":boss_cooldown,"mastery":{"rank":rush.rank,"wins":rush.wins,"best":rush.best},"staff_reserve":staff_reserve,"staff_kinds":staff_kinds,"staff_assignments":staff_assignments,"staff_loads":staff_loads,"version":2,"money":money,"sold":sold,"upgrades":upgrades.duplicate(),"grill_stock":grill_stock,"carried":carried,"counter_stock":counter_stock,"fries_carried":fries_carried}
 
 func restore(data: Variant) -> bool:
     if not data is Dictionary:
@@ -584,7 +631,7 @@ func restore(data: Variant) -> bool:
         if i >= int(next_upgrades.cook) and int(saved_loads[i]) != 0:
             return false
     # New fields are optional so every previously valid v2 save still loads.
-    for key in ["fries_stock", "counter_fries", "combo_served", "boss_actions"]:
+    for key in ["fries_stock", "counter_fries", "combo_served", "boss_actions", "lost"]:
         var upper := 18 if key == "fries_stock" else (30 if key == "counter_fries" else 1000000000)
         if not _valid_integer(d.get(key, 0), 0, upper):
             return false
@@ -636,6 +683,7 @@ func restore(data: Variant) -> bool:
     upgrades = next_upgrades
     money = int(d.money)
     sold = int(d.sold)
+    lost = int(d.get("lost", 0))
     grill_stock = int(d.grill_stock)
     carried = int(d.carried)
     counter_stock = int(d.counter_stock)
@@ -645,6 +693,10 @@ func restore(data: Variant) -> bool:
     combo_served = int(d.get("combo_served", 0))
     boss_actions = int(d.get("boss_actions", 0))
     boss_cooldown = float(saved_cooldown)
+    if not challenge_patience:
+        for customer in queue:
+            customer.patience = calm_patience()
+            customer.max_patience = calm_patience()
     rush = RushDirector.new()
     rush.rank = int(mastery.rank)
     rush.wins = int(mastery.wins)
