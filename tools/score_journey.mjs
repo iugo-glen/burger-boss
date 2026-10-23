@@ -64,7 +64,10 @@ export async function runScoreJourney({page,tap,name}) {
     let completed=null;
     let expectedRecords=before.challenge.records;
     if(name==='mobile-chromium' && process.env.SMOKE_SCORE_FINISH!=='0') {
-      const deadline=Date.now()+330000;
+      // Software-rendered CI browsers can advance active time slower than wall
+      // time. Keep cooking until the real 300-second run ends, with a bounded
+      // wall guard for a stalled browser; all completion assertions stay exact.
+      const deadline=Date.now()+450000;
       let minute=-1;
       while(!(await read()).challenge.finished && Date.now()<deadline) {
         await tap(170,430);
