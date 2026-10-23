@@ -30,9 +30,10 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
       - name: Use the Ubuntu archive for browser dependencies
         # The hosted runner's Azure mirror repeatedly downloaded at ~60 KB/s.
+        # Ubuntu runners also select it through an APT mirror-list file.
         # Both mirrors serve the same signed Ubuntu packages.
         run: |
-          for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+          for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list /etc/apt/apt-mirrors*.txt; do
             if [ -f "$source_file" ]; then
               sudo sed -i \
                 -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
