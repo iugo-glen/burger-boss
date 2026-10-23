@@ -37,7 +37,13 @@ func burger(at: Vector2, factor: float = 1.0) -> void:
     draw_circle(at + Vector2(-7, -21) * factor, 1.6 * factor, Color("fff2be"))
     draw_circle(at + Vector2(6, -19) * factor, 1.6 * factor, Color("fff2be"))
 
-func person(at: Vector2, shirt: Color, skin: Color, role: String, moving: bool, carry: int = 0) -> void:
+func fries(at: Vector2, factor: float = 1.0) -> void:
+    for i in range(5):
+        box(Rect2(at + Vector2(-14 + i * 6, -29 + (i % 2) * 4) * factor, Vector2(5, 22) * factor), Color("ffdb68"), 2)
+    box(Rect2(at + Vector2(-16, -13) * factor, Vector2(32, 21) * factor), Color("cb6b43"), 4)
+    draw_line(at + Vector2(-5, -7) * factor, at + Vector2(5, -7) * factor, Color("ffe7ae"), 3 * factor)
+
+func person(at: Vector2, shirt: Color, skin: Color, role: String, moving: bool, carry: int = 0, carry_kind: String = "burger", side_carry: int = 0) -> void:
     ellipse(at + Vector2(0, 5), Vector2(23, 9), Color(0.12, 0.25, 0.22, 0.16))
     var bounce := sin(clock * 12 + at.x) * 2.0 if moving else sin(clock * 2 + at.x) * 0.7
     var pos := at + Vector2(0, bounce)
@@ -64,7 +70,12 @@ func person(at: Vector2, shirt: Color, skin: Color, role: String, moving: bool, 
     if carry > 0:
         box(Rect2(pos + Vector2(8, -30), Vector2(37, 7)), Color("d9dccc"), 3)
         for i in range(mini(carry, 4)):
-            burger(pos + Vector2(26, -30 - i * 14), 0.8)
+            if carry_kind == "fries":
+                fries(pos + Vector2(26, -30 - i * 14), 0.8)
+            else:
+                burger(pos + Vector2(26, -30 - i * 14), 0.8)
+    if side_carry > 0:
+        fries(pos + Vector2(-27, -28), 0.75)
     if role == "you":
         draw_colored_polygon(PackedVector2Array([pos + Vector2(-7, -107), pos + Vector2(7, -107), pos + Vector2(0, -97)]), Color("ec9b3d"))
 
@@ -86,8 +97,6 @@ func _draw() -> void:
     box(Rect2(15, 294, 690, 22), Color("35685e"), 2)
     for x in [55, 290, 620]:
         box(Rect2(x, 270, 85, 18), Color("99c9bc"), 4)
-    text("KITCHEN", Vector2(98, 336), 17, Color("597969"))
-    text("PICKUP & PAY", Vector2(460, 336), 17, Color("597969"))
     # Three dimensional grill island.
     block(Rect2(75, 352, 190, 102), Color("e2a065"), Color("bd7447"), 35)
     box(Rect2(87, 363, 165, 68), Color("304e4b"), 9)
@@ -115,8 +124,10 @@ func _draw() -> void:
     text("$", Vector2(590, 384), 17)
     for i in range(mini(model.counter_stock, 4)):
         burger(Vector2(475 + i * 23, 413), 0.85)
+    if model.counter_fries > 0:
+        fries(Vector2(543, 414), 0.65)
     meter(Vector2(475, 499), model.serve_progress, Color("4c9b83"))
-    text("%d stock · %d tills" % [model.counter_stock, model.upgrades.register], Vector2(457, 534), 20)
+    text("Burgers %d · Fries %d" % [model.counter_stock, model.counter_fries], Vector2(447, 534), 19)
     for i in range(int(model.upgrades.register) - 1):
         box(Rect2(451 + i * 48, 363, 40, 27), Color("486c63"), 5)
         box(Rect2(457 + i * 48, 367, 28, 13), Color("b2d7b8"), 3)
@@ -129,7 +140,10 @@ func _draw() -> void:
         box(Rect2(87, 616, 65, 42), Color("604f39"), 5)
         for i in range(5):
             box(Rect2(172 + i * 9, 616 + (i % 2) * 5, 6, 31), Color("ffda6c"), 2)
-        text("FRIES", Vector2(126, 732), 20)
+        meter(Vector2(91, 565), model.fries_progress, Color("e4b04e"))
+        text("Fries: %d ready" % model.fries_stock, Vector2(86, 593), 20)
+        for i in range(mini(model.fries_stock, 3)):
+            fries(Vector2(165 + i * 24, 651), 0.65)
     else:
         box(Rect2(72, 620, 178, 72), Color(0.35, 0.43, 0.32, 0.07))
         text("Fries station", Vector2(96, 653), 20, Color("8b9983"))
@@ -157,12 +171,12 @@ func _draw() -> void:
     text("WELCOME", Vector2(300, 906), 22, Color("f6ebc7"))
     var actors: Array[Dictionary] = []
     for customer in model.queue:
-        actors.append({"pos":customer.position,"role":"customer","moving":customer.position.distance_to(customer.target) > 3,"carry":0,"id":int(customer.id)})
+        actors.append({"pos":customer.position,"role":"customer","moving":customer.position.distance_to(customer.target) > 3,"carry":0,"kind":"burger","sides":0,"id":int(customer.id)})
     for diner in model.diners:
-        actors.append({"pos":diner.position,"role":"customer","moving":false,"carry":1,"id":2})
+        actors.append({"pos":diner.position,"role":"customer","moving":false,"carry":1,"kind":"burger","sides":0,"id":2})
     for worker in model.staff:
-        actors.append({"pos":worker.position,"role":worker.role,"moving":worker.state.begins_with("walking") or worker.state == "carrying burgers","carry":worker.carried,"id":0})
-    actors.append({"pos":model.player,"role":"you","moving":model.player.distance_to(model.target) > 3,"carry":model.carried,"id":0})
+        actors.append({"pos":worker.position,"role":worker.role,"moving":worker.state.begins_with("walking") or worker.state.begins_with("carrying"),"carry":worker.carried,"kind":worker.carry_kind,"sides":0,"id":0})
+    actors.append({"pos":model.player,"role":"you","moving":model.player.distance_to(model.target) > 3,"carry":model.carried,"kind":"burger","sides":model.fries_carried,"id":0})
     actors.sort_custom(func(a, b): return a.pos.y < b.pos.y)
     for actor in actors:
         var shirt: Color = SHIRTS[actor.id % SHIRTS.size()]
@@ -172,6 +186,46 @@ func _draw() -> void:
             shirt = Color("4b9b87")
         elif actor.role == "you":
             shirt = Color("e97051")
-        person(actor.pos, shirt, SKINS[actor.id % SKINS.size()], actor.role, actor.moving, actor.carry)
+        person(actor.pos, shirt, SKINS[actor.id % SKINS.size()], actor.role, actor.moving, actor.carry, actor.kind, actor.sides)
+    var worker_numbers := {"cook":0,"cashier":0}
     for worker in model.staff:
-        text(worker.state.capitalize(), worker.position + Vector2(-35, 27), 14, Color("45675a"))
+        worker_numbers[worker.role] += 1
+        var job: String = {"balanced":"Auto", "grill":"Burgers", "fries":"Fries", "counter":"Counter", "drive":"Drive"}.get(worker.assignment, worker.assignment)
+        text("%s #%d · %s" % [str(worker.role).capitalize(), worker_numbers[worker.role], job], worker.position + Vector2(-48, 27), 14, Color("45675a"))
+        text(worker.state.capitalize(), worker.position + Vector2(-42, 44), 12, Color("607568"))
+    _draw_orders()
+
+func _draw_orders() -> void:
+    var head_burger := false
+    var head_drive := false
+    for customer in model.queue:
+        if customer.rush_order and model.rush.active:
+            var remaining: float = clampf(customer.patience / maxf(1, customer.max_patience), 0, 1)
+            var bar_at: Vector2 = customer.position + Vector2(20, -66)
+            box(Rect2(bar_at, Vector2(30, 5)), Color("c5ccb8"), 2)
+            box(Rect2(bar_at, Vector2(maxf(1, 30 * remaining), 5)), Color("e06c4e") if remaining < 0.35 else Color("68a582"), 2)
+        var drive: bool = customer.order == "drive"
+        if (drive and head_drive) or (not drive and head_burger):
+            continue
+        if drive:
+            head_drive = true
+        else:
+            head_burger = true
+        # Gold tickets explain the physical boss handoff instead of using an obscure icon.
+        var special: bool = customer.special and model.rush.active
+        var at := Vector2((410 if drive else 561) if special else (443 if drive else 618), clampf(customer.position.y - 38, 555, 835))
+        box(Rect2(at, Vector2(143, 93) if special else Vector2(86, 67)), Color("f6cb69") if special else Color("fff6dd"), 10)
+        text("BOSS COMBO" if special else ("COMBO" if customer.combo else "BURGER"), at + Vector2(7, 19), 17 if special else 16)
+        var icon_y := 70 if special else 51
+        if special:
+            text("You at drive" if drive else "You at counter", at + Vector2(7, 42), 17)
+        burger(at + Vector2(25, icon_y), 0.6)
+        if customer.combo:
+            text("+", at + Vector2(41, icon_y - 4), 17)
+            fries(at + Vector2(65, icon_y - 2), 0.55)
+        if customer.rush_order and model.rush.active:
+            var remaining: float = clampf(customer.patience / maxf(1, customer.max_patience), 0, 1)
+            var width := 129.0 if special else 72.0
+            var bar_y := 84 if special else 58
+            box(Rect2(at + Vector2(7, bar_y), Vector2(width, 5)), Color("d7d5be"), 2)
+            box(Rect2(at + Vector2(7, bar_y), Vector2(maxf(1, width * remaining), 5)), Color("e06c4e") if remaining < 0.35 else Color("68a582"), 2)

@@ -14,6 +14,8 @@ func _initialize() -> void:
     test_first_sale_and_economy()
     test_save_validation()
     test_queue_and_seats()
+    test_rush_rules_and_recovery()
+    test_rush_balance_matrix()
     test_ten_minutes()
     print("Restaurant acceptance tests: %d checks, %d failures" % [checks, errors])
     quit(1 if errors else 0)
@@ -83,6 +85,7 @@ func test_save_validation() -> void:
     expect(restored.snapshot() == state, "All persistent economy and inventory fields survive reload")
     expect(restored.staff.size() == 2, "Staff restored visibly")
     model.staff[0].carried = 2
+    model.staff[0].carry_kind = "burger"
     model.staff[0].state = "carrying burgers"
     model.staff[0].target = Restaurant.COUNTER
     state = model.snapshot()
@@ -172,3 +175,256 @@ func test_ten_minutes() -> void:
     expect(minimum_window_sales > 0, "Every minute has fulfilled customers: no queue or worker deadlock")
     expect(model.upgrades.drive == 1, "Earned progression reaches drive-through")
     print("Ten-minute run: %d additional sales, $%d cash, minimum %d sales/minute" % [model.sold-sales_at_start,model.money,minimum_window_sales])
+
+# The challenge fixtures start from explicit snapshots; no state or supplies are
+# injected after promotion. Tier zero earns every upgrade from the original loop.
+func rush_fixture(tier: int) -> RefCounted:
+    var model := Restaurant.new()
+    if tier == 0:
+        for i in 12:
+            manual_delivery(model)
+        for id in ["cook", "cashier", "fries"]:
+            expect(model.buy(id), "Earned manual progression unlocks lunch rush team")
+        expect(model.sold >= 25, "Naturally earned rush unlock reaches 25 sales")
+    else:
+        model.money = 1000000
+        model.sold = 100
+        for id in Restaurant.IDS:
+            var limit: int = Restaurant.LIMITS[id] if tier >= 2 else mini(int(Restaurant.LIMITS[id]), 2)
+            while model.upgrades[id] < limit:
+                model.buy(id)
+        if tier == 3:
+            model.rush.rank = 6
+    return model
+
+func run_rush_snapshot(state: Dictionary, active: bool) -> RefCounted:
+    var model := Restaurant.new()
+    expect(model.restore(state), "Challenge comparison starts from matching valid snapshot")
+    model.player = Vector2(350, 900)
+    model.set_target(model.player)
+    expect(model.start_rush(), "Eligible promotion starts a free rush")
+    var leg := "prep"
+    var prep := Restaurant.GRILL
+    var wait := 0.0
+    var since_boost := 10.0
+    for frame in 601:
+        if not model.rush.active:
+            break
+        if active:
+            # Actual movement and imperfect boost timing: never faster than 10s,
+            # although the ability recharges in 8s. No direct position changes.
+            since_boost += 0.1
+            if leg == "prep":
+                model.set_target(prep)
+                if model.player.distance_to(prep) < 45:
+                    wait += 0.1
+                    if since_boost >= 10 and model.boss_action():
+                        since_boost = 0
+                    if wait > 3.0 or model.carried >= model.capacity() or model.fries_carried >= model.capacity():
+                        leg = "drop"
+                        wait = 0
+            else:
+                model.set_target(Restaurant.COUNTER)
+                if model.player.distance_to(Restaurant.COUNTER) < 45:
+                    wait += 0.1
+                    if since_boost >= 10 and model.boss_action():
+                        since_boost = 0
+                    if wait > 1.2 and model.carried == 0 and model.fries_carried == 0:
+                        leg = "prep"
+                        wait = 0
+                        prep = Restaurant.FRIES if model.counter_fries + model.fries_stock < (model.counter_stock + model.grill_stock) * 0.75 else Restaurant.GRILL
+            # Give the boss a real job: deliver gold combo orders at either lane.
+            for drive in [false, true]:
+                var front: int = model._front(drive)
+                if front >= 0 and model.queue[front].get("special", false) and model.counter_stock > 0 and model.counter_fries > 0:
+                    model.set_target(Restaurant.DRIVE if drive else Restaurant.COUNTER)
+                    break
+        model.step(0.1)
+    return model
+
+func test_rush_balance_matrix() -> void:
+    for tier in [0, 1, 2, 3]:
+        var base: RefCounted = rush_fixture(tier)
+        for stocked in [false, true]:
+            var state: Dictionary = base.snapshot()
+            state.grill_stock = 6 + int(base.upgrades.grill) * 3 if stocked else 0
+            state.counter_stock = 30 if stocked else 0
+            state.fries_stock = 18 if stocked else 0
+            state.counter_fries = 30 if stocked else 0
+            state.carried = base.capacity() if stocked else 0
+            state.fries_carried = base.capacity() if stocked else 0
+            var idle: RefCounted = run_rush_snapshot(state, false)
+            var active: RefCounted = run_rush_snapshot(state, true)
+            expect(idle.rush.result == "Try again", "Idle automation cannot replace boss handoffs at any capacity tier")
+            expect(active.rush.result == "Success", "Imperfect active play wins early, middle, maxed and rank-six rushes")
+            expect(active.rush.specials >= active.rush.special_goal and active.rush.combos >= active.rush.combo_goal, "Winning rush fulfills real special and combo targets")
+            expect(active.rush.reward > 0 and active.rush.rank == base.rush.rank + 1, "Rush victory earns money and lasting mastery")
+            expect(active.boss_actions <= 6, "Rush does not require perfect cooldown spam")
+            print("Rush matrix tier=%d stocked=%s goal=%d idle=%d active=%d boss=%d/%d boosts=%d" % [tier,stocked,active.rush.goal,idle.rush.served,active.rush.served,active.rush.specials,active.rush.special_goal,active.boss_actions])
+
+func test_rush_rules_and_recovery() -> void:
+    var locked := Restaurant.new()
+    expect(not locked.start_rush() and not locked.rush.active and locked.money == 0, "Fresh player cannot accidentally start an unsupported rush")
+    var model: RefCounted = rush_fixture(0)
+    model.queue.clear()
+    model.queue.append({"id":20,"position":Restaurant.COUNTER,"target":Restaurant.COUNTER,"order":"burger","combo":true})
+    model.counter_stock = 2
+    model.counter_fries = 0
+    var cash: int = model.money
+    model._sell(false)
+    expect(model.sold == 36 and model.counter_stock == 2 and model.money == cash, "Combo without fries neither consumes burger nor pays ghost money")
+    model.counter_fries = 1
+    var before_sales: int = model.sold
+    model._sell(false)
+    expect(model.sold == before_sales + 1 and model.counter_stock == 1 and model.counter_fries == 0 and model.money == cash + model.burger_value() + 10, "Combo consumes exactly one burger and one real side")
+    model.player = Vector2(350,900)
+    model.target = model.player
+    expect(not model.boss_action() and model.boss_cooldown == 0, "Boost away from station does not spend cooldown")
+    model.player = Restaurant.COUNTER
+    model.target = model.player
+    model.queue.clear()
+    model.carried = 0
+    model.fries_carried = 0
+    expect(not model.boss_action() and model.boss_cooldown == 0, "Empty order cannot consume a boost")
+    model.player = Restaurant.FRIES
+    model.fries_stock = 0
+    expect(model.boss_action() and model.fries_stock == 5 and model.boss_cooldown == 8, "Fryer boost produces a bounded real batch")
+    expect(not model.boss_action() and model.fries_stock == 5, "Boost cooldown prevents duplicate production")
+    model.step(8)
+    model.player = Restaurant.GRILL
+    model.grill_stock = 9
+    expect(not model.boss_action() and model.boss_cooldown == 0, "Full grill does not waste ready boost")
+    # Assignments cause actual navigation, production and typed deliveries.
+    var fryer: RefCounted = rush_fixture(0)
+    fryer.player = Vector2(350,900)
+    fryer.target = fryer.player
+    fryer.grill_stock = 0
+    fryer.counter_stock = 0
+    fryer.fries_stock = 0
+    fryer.counter_fries = 0
+    fryer.carried = 0
+    fryer.fries_carried = 0
+    expect(fryer.assign_staff(0,"fries"), "Cook accepts unlocked fryer assignment")
+    fryer.step(25)
+    expect(fryer.counter_fries > 0 and fryer.counter_stock == 0, "Fryer assignment physically produces and delivers fries instead of burgers")
+    expect(not fryer.assign_staff(0,"drive"), "Inappropriate cook assignment rejected")
+    fryer.assign_staff(0,"grill")
+    fryer.step(25)
+    expect(fryer.counter_stock > 0 or fryer.sold > 36, "Grill reassignment produces burgers and restores service")
+    # Full-counter rescue conserves carried cargo and breaks either ingredient jam.
+    for explicit in [false, true]:
+        var rescue: RefCounted = rush_fixture(0)
+        rescue.player = Vector2(350,900)
+        rescue.target = rescue.player
+        rescue.counter_stock = 30
+        rescue.counter_fries = 0
+        rescue.fries_stock = 8
+        rescue.queue[0].combo = true
+        rescue.staff[0].position = Restaurant.COUNTER + Vector2(-22,65)
+        rescue.staff[0].target = Restaurant.COUNTER
+        rescue.staff[0].state = "carrying burgers"
+        rescue.staff[0].carry_kind = "burger"
+        rescue.staff[0].carried = 3
+        if explicit:
+            rescue.assign_staff(0,"fries")
+        expect(rescue.staff[0].carried == 3 and rescue.staff[0].carry_kind == "burger", "Assignment preserves typed cargo already in transit")
+        var old_sales: int = rescue.sold
+        rescue.step(35)
+        expect(rescue.sold > old_sales, "Balanced or explicitly fryer-assigned loaded cook rescues a full-burger combo blockage")
+    var reverse: RefCounted = rush_fixture(0)
+    reverse.player = Vector2(350,900)
+    reverse.target = reverse.player
+    reverse.counter_stock = 0
+    reverse.counter_fries = 30
+    reverse.grill_stock = 0
+    reverse.staff[0].position = Restaurant.COUNTER + Vector2(-22,65)
+    reverse.staff[0].target = Restaurant.COUNTER
+    reverse.staff[0].state = "carrying fries"
+    reverse.staff[0].carry_kind = "fries"
+    reverse.staff[0].carried = 3
+    var reverse_sales: int = reverse.sold
+    reverse.step(35)
+    expect(reverse.sold > reverse_sales, "Auto assignment recovers from full fries counter and held sides by cooking burgers")
+    # Successful baseline fries routing must collect stock waiting at the fryer.
+    var waiting: RefCounted = rush_fixture(0)
+    waiting.player = Vector2(350,900)
+    waiting.target = waiting.player
+    waiting.counter_stock = 10
+    waiting.counter_fries = 0
+    waiting.fries_stock = 8
+    waiting.queue[0].combo = true
+    var waiting_sales: int = waiting.sold
+    waiting.step(30)
+    expect(waiting.sold > waiting_sales, "Balanced cooks deliver already-prepared fryer stock to unblock combos")
+    # Promotion deliberately includes pre-existing queued customers, even a full queue.
+    var challenge: RefCounted = rush_fixture(0)
+    challenge.player = Vector2(350,900)
+    challenge.target = challenge.player
+    while challenge.queue.size() < 8:
+        challenge._spawn_customer()
+    var queued: int = challenge.queue.size()
+    var money_before: int = challenge.money
+    expect(challenge.start_rush() and challenge.queue.size() == queued and challenge.money == money_before, "Free promotion promotes existing full queue without removing or charging customers")
+    var promoted := true
+    var special_found := false
+    for customer in challenge.queue:
+        promoted = promoted and customer.rush_order
+        special_found = special_found or customer.special
+    expect(promoted and special_found, "Waiting queue becomes eligible rush demand including Boss specials")
+    challenge.step(60)
+    expect(challenge.rush.result == "Try again" and challenge.rush.lost > 0 and challenge.rush.reward == 0, "Idle failed rush records impatient departures with no cash penalty")
+    var cleared := true
+    for customer in challenge.queue:
+        cleared = cleared and not customer.get("rush_order",false) and not customer.get("special",false) and not customer.get("combo",false)
+    expect(cleared, "Failed rush clears special and combo blockers from remaining promoted demand")
+    var recovery_sales: int = challenge.sold
+    challenge.step(40)
+    expect(challenge.sold > recovery_sales and challenge.start_rush(), "Calm economy recovers and retry remains free")
+    var interrupted: Dictionary = challenge.snapshot()
+    var loaded := Restaurant.new()
+    expect(loaded.restore(interrupted) and not loaded.rush.active and loaded.notice.contains("cancelled"), "Midrush reload explicitly cancels optional timer and resumes safe calm service")
+    expect(loaded.boss_cooldown == challenge.boss_cooldown, "Reload preserves boost cooldown")
+    # Every prior version-two save, including maxed cargo, migrates transactionally.
+    var legacy_model: RefCounted = rush_fixture(2)
+    var legacy: Dictionary = legacy_model.snapshot()
+    for key in ["fries_stock","counter_fries","combo_served","boss_actions","boss_cooldown","mastery","staff_kinds","staff_assignments","staff_reserve","staff_fries_reserve","rush_interrupted"]:
+        legacy.erase(key)
+    legacy.staff_loads = [11,11,11,0,0]
+    expect(loaded.restore(legacy) and loaded.upgrades == legacy.upgrades and loaded.staff[0].carried == 11 and loaded.staff[0].carry_kind == "burger", "Old maxed v2 saves and cook cargo migrate with defaults")
+    var current: Dictionary = loaded.snapshot()
+    var invalid: Dictionary = current.duplicate(true)
+    invalid.counter_fries = -1
+    expect(not loaded.restore(invalid) and loaded.snapshot() == current, "Invalid new fields cannot partially mutate save state")
+    invalid = current.duplicate(true)
+    invalid.staff_assignments[0] = "drive"
+    expect(not loaded.restore(invalid) and loaded.snapshot() == current, "Invalid saved role assignment rejected transactionally")
+    var cargo: RefCounted = rush_fixture(0)
+    cargo.staff[0].carried = 2
+    cargo.staff[0].carry_kind = "fries"
+    cargo.staff[0].held_burgers = 3
+    cargo.assign_staff(0,"fries")
+    expect(loaded.restore(cargo.snapshot()) and loaded.staff[0].carried == 2 and loaded.staff[0].carry_kind == "fries" and loaded.staff[0].held_burgers == 3 and loaded.staff[0].assignment == "fries", "Typed fries cargo, rescue burger tray and assignment survive reload")
+    # A loaded rescue worker swaps the already held opposite tray; never creates
+    # two reserves or a snapshot rejected by the next browser reload.
+    cargo.staff[0].position = Restaurant.COUNTER + Vector2(-22,65)
+    cargo.staff[0].target = Restaurant.COUNTER
+    cargo.staff[0].state = "carrying fries"
+    cargo.staff[0].assignment = "balanced"
+    cargo.counter_stock = 0
+    cargo.counter_fries = 30
+    cargo._update_worker(cargo.staff[0],0.1)
+    expect(cargo.staff[0].carried == 3 and cargo.staff[0].carry_kind == "burger" and cargo.staff[0].held_fries == 2 and cargo.staff[0].held_burgers == 0, "Opposite held tray becomes rescue delivery without losing or inventing ingredients")
+    expect(loaded.restore(cargo.snapshot()), "Valid rescue save remains valid after worker takes next step")
+    var invalid_same: Dictionary = cargo.snapshot()
+    invalid_same.staff_loads[0] = 3
+    invalid_same.staff_kinds[0] = "burger"
+    invalid_same.staff_reserve[0] = 2
+    invalid_same.staff_fries_reserve[0] = 0
+    expect(not loaded.restore(invalid_same), "Semantically invalid same-kind cargo and rescue reserve rejected before any overwrite")
+    cargo.staff[0].carried = 0
+    cargo.staff[0].held_burgers = 3
+    cargo.staff[0].held_fries = 0
+    cargo.staff[0].carry_kind = "burger"
+    expect(loaded.restore(cargo.snapshot()) and loaded.staff[0].carried == 3 and loaded.staff[0].held_burgers == 0, "Reload resumes existing held tray instead of producing a second same-kind load")
+    cargo.assign_staff(0,"grill")
+    expect(cargo.staff[0].carried == 3 and cargo.staff[0].held_burgers == 0 and cargo.staff[0].state == "carrying burgers", "Reassignment resumes held tray without discarding or duplicating it")

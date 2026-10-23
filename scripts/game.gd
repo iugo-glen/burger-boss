@@ -4,6 +4,7 @@ const Restaurant = preload("res://scripts/restaurant.gd")
 const SaveStore = preload("res://scripts/save_store.gd")
 const Art = preload("res://scripts/restaurant_art.gd")
 const Sound = preload("res://scripts/kitchen_sound.gd")
+const RushHUD = preload("res://scripts/rush_hud.gd")
 const SIZE := Vector2(720, 1280)
 const UPGRADE_IDS := ["grill", "register", "speed", "value", "capacity"]
 const UI_PREFS := "user://burger_boss_ui.cfg"
@@ -12,6 +13,7 @@ var model = Restaurant.new()
 var art: Node2D
 var sound: Node
 var menu := "upgrades"
+var selected_staff := {"cook":0,"cashier":0}
 var guide_visible := true
 var prefs_saved := true
 var notice_text := ""
@@ -87,7 +89,8 @@ func _process(delta: float) -> void:
     telemetry_timer += delta
     if OS.has_feature("web") and telemetry_timer > 0.5:
         telemetry_timer = 0.0
-        var state := {"elapsed":model.elapsed,"money":model.money,"sold":model.sold,"carried":model.carried,"grill_stock":model.grill_stock,"counter_stock":model.counter_stock,"player":{"x":model.player.x,"y":model.player.y},"paused":paused or unfocused,"tutorial":model.tutorial(),"upgrades":model.upgrades,"guide_visible":guide_visible,"tutorial_visible":guide_visible,"menu":menu,"notice_visible":notice_remaining > 0.0,"notice_text":notice_text if notice_remaining > 0.0 else "","prefs_saved":prefs_saved}
+        var state := {"elapsed":model.elapsed,"money":model.money,"sold":model.sold,"carried":model.carried,"grill_stock":model.grill_stock,"counter_stock":model.counter_stock,"player":{"x":model.player.x,"y":model.player.y},"paused":paused or unfocused,"tutorial":model.tutorial(),"upgrades":model.upgrades,"guide_visible":guide_visible,"tutorial_visible":guide_visible,"menu":menu,"selected_staff":selected_staff.duplicate(),"notice_visible":notice_remaining > 0.0,"notice_text":notice_text if notice_remaining > 0.0 else "","prefs_saved":prefs_saved}
+        state.merge(RushHUD.telemetry(model))
         JavaScriptBridge.eval("window.__burgerBoss = " + JSON.stringify(state), true)
 
 func _load_ui_prefs() -> void:
@@ -107,7 +110,7 @@ func _set_guide(visible: bool) -> void:
     queue_redraw()
 
 func _show_notice(message: String) -> void:
-    seen_notice = message
+    seen_notice = model.notice
     notice_text = message
     notice_remaining = 4.0 if not message.is_empty() else 0.0
 
@@ -171,6 +174,9 @@ func _press(pos: Vector2, id: int) -> void:
             "notice_close": notice_remaining = 0.0
             "upgrades", "staff", "expand": menu = button.id
             _:
+                if RushHUD.handle(self, button.id):
+                    queue_redraw()
+                    return
                 if not paused and not unfocused:
                     var purchased: bool = model.buy(button.id)
                     _show_notice(model.notice)
@@ -264,6 +270,9 @@ func _draw() -> void:
     _text(">" if paused else "II", Vector2(652, 59), 26, Color.WHITE)
     _button("pause", Rect2(630, 24, 64, 54))
     _text("TRAY %d/%d" % [model.carried, model.capacity()], Vector2(470, 125), 22, Color("ffcf68"))
+    if model.upgrades.fries > 0:
+        _text("Counter: %d burgers, %d fries" % [model.counter_stock, model.counter_fries], Vector2(278, 151), 16, Color("dce7d1"))
+        _text("+ %d fries" % model.fries_carried, Vector2(559, 151), 17, Color("ffcf68"))
     if guide_visible:
         _box(Rect2(20, 171, 680, 100), Color("fff7df"))
         _text("NEXT UP", Vector2(38, 192), 15, Color("a45b36"))
@@ -273,6 +282,7 @@ func _draw() -> void:
         _box(Rect2(618, 175, 82, 82), Color("e7dfc4"))
         _text("X", Vector2(651, 224), 27)
         _button("guide_close", Rect2(618, 175, 82, 82))
+    RushHUD.draw(self)
     _box(Rect2(0, 966, 720, 314), Color("fff7e6"), 0)
     var tabs := [{"id":"upgrades", "title":"Upgrades"}, {"id":"staff", "title":"Hire staff"}, {"id":"expand", "title":"Expand"}]
     for i in range(tabs.size()):
@@ -283,16 +293,15 @@ func _draw() -> void:
         _text(tab.title, rect.position + Vector2(24, 50), 27, Color("ffcf68") if active else Color("263b3b"))
         _button(tab.id, rect)
     if menu == "staff":
-        _card("cook", Rect2(18, 1072, 334, 168), ["Cooks & carries burgers", "to your counter.", "%d working" % model.upgrades.cook])
-        _card("cashier", Rect2(368, 1072, 334, 168), ["Serves waiting customers", "and collects payments.", "%d working" % model.upgrades.cashier])
+        RushHUD.draw_staff(self)
     elif menu == "expand":
         _card("table", Rect2(18, 1072, 218, 168), ["More seats", "and bigger tips."])
-        _card("fries", Rect2(252, 1072, 218, 168), ["Pick up fries", "for bonus income."])
+        _card("fries", Rect2(252, 1072, 218, 168), ["Cook & deliver", "sides for combos."])
         _card("drive", Rect2(486, 1072, 218, 168), ["Open another", "service window."])
     else:
         for i in range(UPGRADE_IDS.size()):
             _card(UPGRADE_IDS[i], Rect2(18 + (i % 3) * 234, 1072 + (i / 3) * 88, 218, 82))
-    _text(save_status, Vector2(23, 1265), 17, Color("607467"))
+    _text("Rush rank %d · %s" % [model.rush.rank, save_status], Vector2(23, 1265), 17, Color("607467"))
     if notice_remaining > 0.0:
         _box(Rect2(28, 888, 664, 78), Color("193e3c"))
         _fit_text(notice_text, Vector2(43, 935), 558, 21, Color("fff1bb"))
