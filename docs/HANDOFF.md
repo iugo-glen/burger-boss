@@ -2,6 +2,14 @@
 
 Scope: [issue #1](https://github.com/iugo-glen/burger-boss/issues/1), all five milestones. The implementation uses original GDScript, procedural vector art and synthesized audio, with no third-party game assets or runtime services.
 
+## Starting over
+
+The pause menu now exposes **Resume** and **Start over**. A separate confirmation explains that starting over erases this device's money, staff, upgrades, food and rush rank. Cancel and Escape retain progress. The dialog pauses the simulation and blocks underlying controls. Confirming writes a fresh save before replacing the active restaurant; if storage fails, the current restaurant and saved progress are retained. Saves use a temporary file followed by a checked rename rather than deleting or truncating the primary save first.
+
+Successful restart clears the old session state, returns to the initial restaurant and restores the tutorial. It does not clear browser site data or change progress on other devices. GitHub Pages deployment remains automatic after a successful main build. Physical iPhone/iPad Safari acceptance remains a device check.
+
+Godot 4.4.1 headless import, runtime, **1,407 assertions with zero failures**, and Compatibility HTML5 export passed. The 22 new persistence checks use isolated test paths and exercise a rich save, failed temporary-file creation, failed rename, old-save preservation, complete reset and reload. Browser regressions cover real Cancel/Escape/confirmation controls, blocked background input, held keys, reset reload and later autosave; the full mobile journey also exercises resetting an active rush with earned rank and staff. Current browser/CI results are recorded in the reset pull request and retained artifacts.
+
 ## Lunch-rush gameplay update
 
 The earlier restaurant became passive once staff and upgrades were purchased. This update adds a repeatable, optional 60-second promotion that brings extra customers and has three visible targets: orders, burger-and-fries combos and gold Boss-special handoffs. A special consumes real ingredients and requires the boss near that order's counter or drive-through station. Successful promotions award money and rank; targets grow with kitchen capacity and the first six ranks. Waiting customers are included when a promotion starts so a full normal queue cannot waste the timer.

@@ -4,6 +4,7 @@ import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import assert from 'node:assert/strict';
 import { runRushJourney } from './rush_journey.mjs';
+import { runResetJourney } from './reset_journey.mjs';
 
 const root = resolve(process.env.WEB_ROOT || 'public');
 const types = { '.html': 'text/html', '.js': 'application/javascript', '.wasm': 'application/wasm', '.pck': 'application/octet-stream', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -166,7 +167,8 @@ try {
           }
           assert.ok((await page.evaluate(()=>window.__burgerBoss.sold))>restored.sold,'soak continues serving');
         }
-        reports.push({name,firstSaleSeconds:first.elapsed,restored,earnedHire,rushJourney,soakSeconds,final:await page.evaluate(()=>window.__burgerBoss),errors});
+        const resetJourney=await runResetJourney({page,tap,name,initial});
+        reports.push({name,firstSaleSeconds:first.elapsed,restored,earnedHire,rushJourney,resetJourney,soakSeconds,final:await page.evaluate(()=>window.__burgerBoss),errors});
       } else {
         await page.waitForTimeout(5000);
         reports.push({name,loaded:true,errors});
