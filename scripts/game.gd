@@ -5,6 +5,7 @@ const SaveStore = preload("res://scripts/save_store.gd")
 const Art = preload("res://scripts/restaurant_art.gd")
 const Sound = preload("res://scripts/kitchen_sound.gd")
 const RushHUD = preload("res://scripts/rush_hud.gd")
+const PauseMenu = preload("res://scripts/pause_menu.gd")
 const SIZE := Vector2(720, 1280)
 const UPGRADE_IDS := ["grill", "register", "speed", "value", "capacity"]
 const UI_PREFS := "user://burger_boss_ui.cfg"
@@ -20,6 +21,8 @@ var notice_text := ""
 var notice_remaining := 0.0
 var seen_notice := ""
 var paused := false
+var reset_confirm_visible := false
+var reset_error := ""
 var unfocused := false
 var muted := false
 var buttons: Array[Dictionary] = []
@@ -33,6 +36,7 @@ var clock := 0.0
 var last_sale := 0
 var telemetry_timer := 0.0
 var keyboard_moving := false
+var wait_for_keyboard_release := false
 var popups: Array[Dictionary] = []
 
 func _ready() -> void:
@@ -58,8 +62,13 @@ func _process(delta: float) -> void:
     clock += delta
     notice_remaining = maxf(0.0, notice_remaining - delta)
     if not paused and not unfocused:
-        var direction := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
-        direction += Vector2(float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)), float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
+        var direction := Vector2.ZERO
+        if wait_for_keyboard_release:
+            if not _movement_keys_down():
+                wait_for_keyboard_release = false
+        else:
+            direction = Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+            direction += Vector2(float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)), float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
         if pointer >= 0 and dragging:
             direction = (pointer_pos - anchor).limit_length(65) / 65.0
         if direction.length() > 0.05:
@@ -89,9 +98,15 @@ func _process(delta: float) -> void:
     telemetry_timer += delta
     if OS.has_feature("web") and telemetry_timer > 0.5:
         telemetry_timer = 0.0
-        var state := {"elapsed":model.elapsed,"money":model.money,"sold":model.sold,"carried":model.carried,"grill_stock":model.grill_stock,"counter_stock":model.counter_stock,"player":{"x":model.player.x,"y":model.player.y},"paused":paused or unfocused,"tutorial":model.tutorial(),"upgrades":model.upgrades,"guide_visible":guide_visible,"tutorial_visible":guide_visible,"menu":menu,"selected_staff":selected_staff.duplicate(),"notice_visible":notice_remaining > 0.0,"notice_text":notice_text if notice_remaining > 0.0 else "","prefs_saved":prefs_saved}
+        var state := {"elapsed":model.elapsed,"money":model.money,"sold":model.sold,"carried":model.carried,"grill_stock":model.grill_stock,"counter_stock":model.counter_stock,"player":{"x":model.player.x,"y":model.player.y},"paused":paused or unfocused,"pause_menu_visible":paused or unfocused,"reset_confirm_visible":reset_confirm_visible,"reset_error":reset_error,"muted":muted,"keyboard_release_pending":wait_for_keyboard_release,"tutorial":model.tutorial(),"upgrades":model.upgrades,"guide_visible":guide_visible,"tutorial_visible":guide_visible,"menu":menu,"selected_staff":selected_staff.duplicate(),"notice_visible":notice_remaining > 0.0,"notice_text":notice_text if notice_remaining > 0.0 else "","prefs_saved":prefs_saved}
         state.merge(RushHUD.telemetry(model))
         JavaScriptBridge.eval("window.__burgerBoss = " + JSON.stringify(state), true)
+
+func _movement_keys_down() -> bool:
+    for key in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_LEFT, KEY_DOWN, KEY_RIGHT]:
+        if Input.is_physical_key_pressed(key):
+            return true
+    return false
 
 func _load_ui_prefs() -> void:
     var preferences := ConfigFile.new()
@@ -99,14 +114,21 @@ func _load_ui_prefs() -> void:
         var saved_visibility: Variant = preferences.get_value("help", "guide_visible", true)
         if typeof(saved_visibility) == TYPE_BOOL:
             guide_visible = saved_visibility
+        var saved_mute: Variant = preferences.get_value("sound", "muted", false)
+        if typeof(saved_mute) == TYPE_BOOL:
+            muted = saved_mute
+
+func _save_ui_prefs() -> void:
+    var preferences := ConfigFile.new()
+    preferences.set_value("help", "guide_visible", guide_visible)
+    preferences.set_value("sound", "muted", muted)
+    prefs_saved = preferences.save(UI_PREFS) == OK
+    if not prefs_saved:
+        save_status = "Preferences could not be saved on this device"
 
 func _set_guide(visible: bool) -> void:
     guide_visible = visible
-    var preferences := ConfigFile.new()
-    preferences.set_value("help", "guide_visible", guide_visible)
-    prefs_saved = preferences.save(UI_PREFS) == OK
-    if not prefs_saved:
-        save_status = "Hint preference could not be saved on this device"
+    _save_ui_prefs()
     queue_redraw()
 
 func _show_notice(message: String) -> void:
@@ -134,8 +156,12 @@ func _local(screen: Vector2) -> Vector2:
     return get_global_transform_with_canvas().affine_inverse() * screen
 
 func _input(event: InputEvent) -> void:
+    var menu_owned_input := paused or unfocused or reset_confirm_visible
     if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-        _toggle_pause()
+        if reset_confirm_visible:
+            _cancel_reset()
+        elif not unfocused:
+            _toggle_pause()
     elif event is InputEventScreenTouch:
         if event.pressed and pointer == -1:
             _press(_local(event.position), event.index)
@@ -150,14 +176,73 @@ func _input(event: InputEvent) -> void:
             _release()
     elif event is InputEventMouseMotion and pointer == 100:
         _drag(_local(event.position))
+    if menu_owned_input:
+        get_viewport().set_input_as_handled()
 
 func _toggle_pause() -> void:
+    if reset_confirm_visible:
+        return
     paused = not paused
     model.set_target(model.player)
     _release()
+    keyboard_moving = false
     _save()
+    queue_redraw()
+
+func _open_reset() -> void:
+    paused = true
+    reset_confirm_visible = true
+    reset_error = ""
+    model.set_target(model.player)
+    _release()
+    keyboard_moving = false
+    queue_redraw()
+
+func _cancel_reset() -> void:
+    reset_confirm_visible = false
+    reset_error = ""
+    paused = true
+    _release()
+    queue_redraw()
+
+func _confirm_reset() -> void:
+    if not reset_confirm_visible:
+        return
+    var fresh = SaveStore.reset_progress()
+    if fresh == null:
+        reset_error = "Could not save a fresh start. Your restaurant is unchanged."
+        paused = true
+        queue_redraw()
+        return
+    # The fresh state is saved before replacing the live restaurant.
+    model = fresh
+    art.model = model
+    menu = "upgrades"
+    selected_staff = {"cook":0,"cashier":0}
+    popups.clear()
+    autosave = 0.0
+    clock = 0.0
+    last_sale = model.sale_serial
+    telemetry_timer = 0.0
+    pointer = -1
+    dragging = false
+    anchor = Vector2.ZERO
+    pointer_pos = Vector2.ZERO
+    keyboard_moving = false
+    model.set_target(model.player)
+    wait_for_keyboard_release = true
+    reset_confirm_visible = false
+    reset_error = ""
+    paused = false
+    save_status = "Fresh restaurant saved on this device"
+    _set_guide(true)
+    _show_notice(model.notice)
+    art.queue_redraw()
+    queue_redraw()
 
 func _press(pos: Vector2, id: int) -> void:
+    if PauseMenu.handle_press(self, pos):
+        return
     for button in buttons:
         if not button.rect.has_point(pos):
             continue
@@ -168,7 +253,9 @@ func _press(pos: Vector2, id: int) -> void:
             continue
         match button.id:
             "pause": _toggle_pause()
-            "sound": muted = not muted
+            "sound":
+                muted = not muted
+                _save_ui_prefs()
             "help": _set_guide(true)
             "guide_close": _set_guide(false)
             "notice_close": notice_remaining = 0.0
@@ -266,9 +353,9 @@ func _draw() -> void:
     _box(Rect2(550, 24, 68, 54), Color("2e5850"))
     _text("OFF" if muted else "SFX", Vector2(563, 58), 20, Color.WHITE)
     _button("sound", Rect2(550, 24, 68, 54))
-    _box(Rect2(630, 24, 64, 54), Color("2e5850"))
-    _text(">" if paused else "II", Vector2(652, 59), 26, Color.WHITE)
-    _button("pause", Rect2(630, 24, 64, 54))
+    _box(PauseMenu.HEADER_PAUSE, Color("2e5850"))
+    _text("Pause", Vector2(635, 57), 20, Color.WHITE)
+    _button("pause", PauseMenu.HEADER_PAUSE)
     _text("TRAY %d/%d" % [model.carried, model.capacity()], Vector2(470, 125), 22, Color("ffcf68"))
     if model.upgrades.fries > 0:
         _text("Counter: %d burgers, %d fries" % [model.counter_stock, model.counter_fries], Vector2(278, 151), 16, Color("dce7d1"))
@@ -316,8 +403,4 @@ func _draw() -> void:
         draw_circle(anchor + (pointer_pos - anchor).limit_length(65), 25, Color(1, 1, 1, 0.7))
     for popup in popups:
         _text(popup.text, popup.pos + Vector2(0, -popup.age * 55), 32, Color("337553"))
-    if paused or unfocused:
-        _box(Rect2(0, 161, 720, 805), Color(0.08, 0.2, 0.17, 0.85), 0)
-        _text("TAKE A BREATHER", Vector2(158, 523), 35, Color("ffcf68"))
-        _text("Your restaurant is paused", Vector2(201, 571), 25, Color.WHITE)
-        _text("Tap > above to continue", Vector2(215, 615), 22, Color.WHITE)
+    PauseMenu.draw(self)

@@ -13,6 +13,7 @@ func expect(condition: bool, description: String) -> void:
 func _initialize() -> void:
     test_first_sale_and_economy()
     test_save_validation()
+    test_reset_transaction()
     test_queue_and_seats()
     test_rush_rules_and_recovery()
     test_rush_balance_matrix()
@@ -428,3 +429,70 @@ func test_rush_rules_and_recovery() -> void:
     expect(loaded.restore(cargo.snapshot()) and loaded.staff[0].carried == 3 and loaded.staff[0].held_burgers == 0, "Reload resumes existing held tray instead of producing a second same-kind load")
     cargo.assign_staff(0,"grill")
     expect(cargo.staff[0].carried == 3 and cargo.staff[0].held_burgers == 0 and cargo.staff[0].state == "carrying burgers", "Reassignment resumes held tray without discarding or duplicating it")
+
+func test_reset_transaction() -> void:
+    # These paths are isolated fixtures. Never reset or write DEFAULT_PATH.
+    var root := "user://test_reset_transaction"
+    var path := root.path_join("save.json")
+    var temporary := path + ".tmp"
+    expect(DirAccess.make_dir_recursive_absolute(root) == OK, "Reset test creates its own isolated save directory")
+    var rich: RefCounted = rush_fixture(2)
+    rich.money = 43210
+    rich.sold = 987
+    rich.grill_stock = 15
+    rich.carried = 7
+    rich.counter_stock = 22
+    rich.fries_stock = 12
+    rich.counter_fries = 19
+    rich.fries_carried = 4
+    rich.combo_served = 123
+    rich.boss_actions = 77
+    rich.boss_cooldown = 5.0
+    rich.rush.rank = 6
+    rich.rush.wins = 8
+    rich.rush.best = 42
+    rich.staff[0].carried = 3
+    rich.staff[0].carry_kind = "fries"
+    rich.staff[0].assignment = "fries"
+    var previous: Dictionary = rich.snapshot()
+    expect(SaveStore.save(rich, path), "Rich progress is persisted before testing reset")
+    expect(not FileAccess.file_exists(temporary), "Successful atomic save leaves no temporary file")
+    var old_bytes := FileAccess.get_file_as_string(path)
+    # A directory at the temporary filename causes a real storage-open failure.
+    # The directory is test-owned and removed only by this fixture's cleanup.
+    expect(DirAccess.make_dir_absolute(temporary) == OK, "Fixture blocks temporary file creation to simulate storage failure")
+    var failed: RefCounted = SaveStore.reset_progress(path)
+    expect(failed == null, "Failed reset never hands the UI an unpersisted fresh model")
+    expect(rich.snapshot() == previous, "Failed reset leaves every live progress field intact")
+    expect(FileAccess.get_file_as_string(path) == old_bytes, "Failed reset preserves old primary save byte for byte")
+    expect(DirAccess.dir_exists_absolute(temporary), "Failed open does not delete an unrelated temporary-path directory")
+    var retained := Restaurant.new()
+    expect(SaveStore.load_into(retained,path) and retained.snapshot() == previous, "Old rich save still restores after failed reset")
+    expect(DirAccess.remove_absolute(temporary) == OK, "Fixture removes its own storage-failure directory")
+    # A rename failure must also preserve the destination, not delete it first.
+    var blocked := root.path_join("blocked_destination")
+    expect(DirAccess.make_dir_absolute(blocked) == OK, "Fixture creates nonempty destination directory for rename failure")
+    var sentinel := blocked.path_join("sentinel.txt")
+    var sentinel_file := FileAccess.open(sentinel,FileAccess.WRITE)
+    sentinel_file.store_string("keep existing destination")
+    sentinel_file.close()
+    expect(SaveStore.reset_progress(blocked) == null, "Commit failure is reported instead of swapping to fresh progress")
+    expect(DirAccess.dir_exists_absolute(blocked) and FileAccess.get_file_as_string(sentinel) == "keep existing destination", "Failed commit preserves its existing destination and contents")
+    expect(not FileAccess.file_exists(blocked + ".tmp"), "Failed commit cleans only the temporary file it wrote")
+    expect(FileAccess.get_file_as_string(path) == old_bytes, "Commit failure never touches the isolated previous progress save")
+    var missing := root.path_join("missing_parent/save.json")
+    expect(SaveStore.reset_progress(missing) == null and not FileAccess.file_exists(missing), "Missing storage directory fails safely without manufacturing a success")
+    var fresh: RefCounted = SaveStore.reset_progress(path)
+    expect(fresh != null and fresh != rich, "Successful reset returns a distinct persisted Restaurant")
+    var initial := Restaurant.new()
+    if fresh != null:
+        expect(fresh.snapshot() == initial.snapshot(), "Reset clears money, upgrades, staff, cargo, fries, cooldown and mastery")
+        expect(fresh.player == initial.player and fresh.target == initial.target and fresh.queue.size() == 3 and not fresh.rush.active, "Reset starts a playable restaurant with fresh position, waiting customers and no active rush")
+    expect(rich.snapshot() == previous, "Successful reset also leaves the old live object untouched until caller swaps it")
+    var reloaded := Restaurant.new()
+    expect(SaveStore.load_into(reloaded,path) and reloaded.snapshot() == initial.snapshot(), "Reload after reset restores only fresh progress")
+    expect(not FileAccess.file_exists(temporary), "Reset atomically replaces primary and consumes temporary file")
+    DirAccess.remove_absolute(path)
+    DirAccess.remove_absolute(sentinel)
+    DirAccess.remove_absolute(blocked)
+    DirAccess.remove_absolute(root)
