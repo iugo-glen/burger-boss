@@ -23,6 +23,19 @@ jobs:
         run: bash tools/install_godot.sh
       - name: Import, test and export (fail on engine errors)
         run: bash tools/validate.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Desktop and mobile HTML5 browser smoke
+        run: npm run smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence
+          path: build/browser
       - uses: actions/upload-artifact@v4
         if: always()
         with:
