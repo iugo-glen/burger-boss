@@ -29,7 +29,7 @@ npm run smoke
 
 `tools/validate.sh` checks the exact engine version, imports, runs a scene smoke test and the deterministic system tests, then exports `public/index.html`. It fails on Godot error diagnostics even if the engine returns exit code zero. Override `GODOT_BIN` to use an existing 4.4.1 installation. For restricted environments, point `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` at writable directories when installing and running Godot.
 
-The browser suite serves the actual release export over HTTP and checks Chromium desktop, Chromium mobile touch and WebKit mobile emulation. It tests a fresh first sale, pause/save and reload, and collects screenshots and a JSON report under `build/browser/`. The `?smoke=1` read-only status bridge supports assertions without granting money or changing simulation state. Use `SMOKE_SECONDS=600 npm run smoke` for an optional real-time extended run on each configured browser.
+The browser suite serves the actual release export over HTTP and checks Chromium desktop, Chromium mobile touch and WebKit mobile emulation. It tests a fresh first sale, pause/save and reload, and collects screenshots and a JSON report under `build/browser/`. The `?smoke=1` read-only status bridge supports assertions without granting money or changing simulation state. Use `SMOKE_ENGINES=mobile-chromium SMOKE_SECONDS=600 SMOKE_REPORT=build/browser/soak-report.json npm run smoke` for an optional real-time ten-minute touch session. Omit `SMOKE_ENGINES` to run each configured browser.
 
 To play the exported game locally:
 

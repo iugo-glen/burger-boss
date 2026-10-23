@@ -42,7 +42,7 @@ The actual HTML5 release was played through controls in all three browser contex
 
 Local evidence: `build/logs/` (engine logs), `build/browser/report.json` (browser assertions), `build/browser/*-played.png` (screenshots). CI retains corresponding artifacts. These browser timings are test-run observations, not guarantees about individual devices.
 
-The game PR and real-time ten-minute touch-session evidence are appended after those checks finish.
+The game implementation is [PR #3](https://github.com/iugo-glen/burger-boss/pull/3), stacked on #2. Its PR description records the final GitHub CI and real-time ten-minute touch-session results. Browser-control regressions additionally verify pause freezes simulation time, WASD stops on release and Chromium's actual touch start/move/end events steer the joystick and stop on release.
 
 ## Practical limitations
 
