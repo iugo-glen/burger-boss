@@ -4,6 +4,7 @@ version=4.4.1
 tool_dir="${GODOT_TOOL_DIR:-$PWD/.tools/godot}"
 data_dir="${XDG_DATA_HOME:-${HOME}/.local/share}"
 mkdir -p "$tool_dir" "$data_dir/godot/export_templates/$version.stable"
+touch "$tool_dir/.gdignore"
 base="https://github.com/godotengine/godot/releases/download/$version-stable"
 if [[ ! -x "$tool_dir/godot" ]]; then
   curl --fail --location --retry 3 "$base/Godot_v${version}-stable_linux.x86_64.zip" -o "$tool_dir/engine.zip"
