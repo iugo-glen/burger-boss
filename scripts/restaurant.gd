@@ -1,5 +1,12 @@
 extends RefCounted
 ## Deterministic restaurant simulation, independent of scene/render/input APIs.
+signal sale_completed(customer: Dictionary)
+signal customer_abandoned(customer: Dictionary)
+
+# Challenge-only runtime flags; never serialized into career saves.
+var challenge_patience := false
+var simulation_frozen := false
+
 const RushDirector = preload("res://scripts/rush_director.gd")
 const GRILL := Vector2(170, 430)
 const COUNTER := Vector2(540, 430)
@@ -71,6 +78,8 @@ func can_buy(id: String) -> bool:
     return lock_reason(id).is_empty() and money >= cost(id)
 
 func buy(id: String) -> bool:
+    if simulation_frozen:
+        return false
     var reason := lock_reason(id)
     if not reason.is_empty():
         notice = reason
@@ -86,6 +95,8 @@ func buy(id: String) -> bool:
     return true
 
 func set_target(point: Vector2) -> void:
+    if simulation_frozen:
+        return
     target = Vector2(clampf(point.x, 42, 678), clampf(point.y, 230, 940))
 
 func tutorial() -> String:
@@ -104,7 +115,7 @@ func tutorial() -> String:
     return "Your team is working! Unlock fries, then promote a lunch rush."
 
 func step(delta: float) -> void:
-    if not is_finite(delta) or delta <= 0:
+    if simulation_frozen or not is_finite(delta) or delta <= 0:
         return
     # Substeps prevent missed arrivals/interactions when callers fast-forward.
     var remaining := minf(delta, 60.0)
@@ -115,6 +126,8 @@ func step(delta: float) -> void:
 
 func _tick(dt: float) -> void:
     elapsed += dt
+    if challenge_patience:
+        _tick_challenge_patience(dt)
     boss_cooldown = maxf(0, boss_cooldown - dt)
     if boss_cooldown < 0.000001:
         boss_cooldown = 0
@@ -209,6 +222,8 @@ func allowed_assignments(index: int) -> Array:
     return ["balanced", "counter", "drive"] if upgrades.drive > 0 else ["balanced", "counter"]
 
 func assign_staff(index: int, assignment: String) -> bool:
+    if simulation_frozen:
+        return false
     if not allowed_assignments(index).has(assignment):
         return false
     var worker: Dictionary = staff[index]
@@ -407,6 +422,7 @@ func _sell(is_drive: bool) -> void:
                 break
     money += last_earned
     sale_serial += 1
+    sale_completed.emit(customer.duplicate(true))
     if sold == 1:
         notice = "First burger served! +$%d" % last_earned
     elif sold % 10 == 0:
@@ -424,6 +440,8 @@ func rush_lock_reason() -> String:
     return ""
 
 func start_rush() -> bool:
+    if simulation_frozen:
+        return false
     var reason := rush_lock_reason()
     if not reason.is_empty():
         notice = reason
@@ -435,8 +453,9 @@ func start_rush() -> bool:
         queue[i].rush_order = true
         queue[i].special = i % 4 == 2
         queue[i].combo = i % 2 == 1 or queue[i].special
-        queue[i].patience = 30.0
-        queue[i].max_patience = 30.0
+        if not challenge_patience:
+            queue[i].patience = 30.0
+            queue[i].max_patience = 30.0
     notice = "Lunch rush! %d orders, %d combos, %d Boss handoffs. Stand at the counter for gold orders." % [rush.goal, rush.combo_goal, rush.special_goal]
     return true
 
@@ -445,9 +464,10 @@ func _tick_rush(dt: float) -> void:
         return
     rush.time_left = maxf(0, rush.time_left - dt)
     for i in range(queue.size() - 1, -1, -1):
-        if queue[i].get("rush_order", false):
+        if not challenge_patience and queue[i].get("rush_order", false):
             queue[i].patience -= dt
             if queue[i].patience <= 0:
+                customer_abandoned.emit(queue[i].duplicate(true))
                 queue.remove_at(i)
                 rush.lost += 1
     if rush.achieved() or rush.time_left <= 0:
@@ -483,6 +503,8 @@ func boss_label() -> String:
     return "Move to a station"
 
 func boss_action() -> bool:
+    if simulation_frozen:
+        return false
     if boss_cooldown > 0:
         notice = "Boss boost is recharging"
         return false
@@ -650,3 +672,12 @@ static func _valid_integer(value: Variant, low: int, high: int) -> bool:
     if not (value is int or value is float):
         return false
     return is_finite(float(value)) and float(value) == floor(float(value)) and float(value) >= low and float(value) <= high
+
+func _tick_challenge_patience(dt: float) -> void:
+    for i in range(queue.size() - 1, -1, -1):
+        queue[i].patience = maxf(0.0, float(queue[i].patience) - dt)
+        if queue[i].patience <= 0.000001:
+            customer_abandoned.emit(queue[i].duplicate(true))
+            if rush.active and queue[i].get("rush_order", false):
+                rush.lost += 1
+            queue.remove_at(i)

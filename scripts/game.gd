@@ -6,11 +6,20 @@ const Art = preload("res://scripts/restaurant_art.gd")
 const Sound = preload("res://scripts/kitchen_sound.gd")
 const RushHUD = preload("res://scripts/rush_hud.gd")
 const PauseMenu = preload("res://scripts/pause_menu.gd")
+const ChallengeHUD = preload("res://scripts/challenge_hud.gd")
+const ScoreChallenge = preload("res://scripts/score_challenge.gd")
+const ChallengeStore = preload("res://scripts/challenge_store.gd")
 const SIZE := Vector2(720, 1280)
 const UPGRADE_IDS := ["grill", "register", "speed", "value", "capacity"]
 const UI_PREFS := "user://burger_boss_ui.cfg"
 const TITLES := {"grill":"Grill", "register":"Register", "speed":"Speed", "value":"Recipe", "capacity":"Tray", "cook":"Hire cook", "cashier":"Hire cashier", "table":"Table", "fries":"Fries", "drive":"Drive-thru"}
 var model = Restaurant.new()
+var career_model: RefCounted
+var challenge: RefCounted
+var challenge_panel := ""
+var challenge_records := {}
+var challenge_record_saved := true
+var challenge_recorded := false
 var art: Node2D
 var sound: Node
 var menu := "upgrades"
@@ -41,6 +50,8 @@ var popups: Array[Dictionary] = []
 
 func _ready() -> void:
     SaveStore.load_into(model)
+    career_model = model
+    challenge_records = ChallengeStore.load_records()
     _load_ui_prefs()
     _show_notice(model.notice)
     last_sale = model.sale_serial
@@ -59,9 +70,10 @@ func _fit() -> void:
     position = (space - SIZE * factor) * 0.5
 
 func _process(delta: float) -> void:
+    _record_finished_challenge()
     clock += delta
     notice_remaining = maxf(0.0, notice_remaining - delta)
-    if not paused and not unfocused:
+    if not paused and not unfocused and not ChallengeHUD.owns_input(self):
         var direction := Vector2.ZERO
         if wait_for_keyboard_release:
             if not _movement_keys_down():
@@ -77,7 +89,11 @@ func _process(delta: float) -> void:
         elif keyboard_moving:
             model.set_target(model.player)
             keyboard_moving = false
-        model.step(minf(delta, 0.1))
+        if challenge != null:
+            challenge.step(minf(delta, 0.1))
+            _record_finished_challenge()
+        else:
+            model.step(minf(delta, 0.1))
         if model.sale_serial != last_sale:
             last_sale = model.sale_serial
             popups.append({"pos":Vector2(540, 330), "age":0.0, "text":"+$%d" % model.last_earned})
@@ -98,8 +114,9 @@ func _process(delta: float) -> void:
     telemetry_timer += delta
     if OS.has_feature("web") and telemetry_timer > 0.5:
         telemetry_timer = 0.0
-        var state := {"elapsed":model.elapsed,"money":model.money,"sold":model.sold,"carried":model.carried,"grill_stock":model.grill_stock,"counter_stock":model.counter_stock,"player":{"x":model.player.x,"y":model.player.y},"paused":paused or unfocused,"pause_menu_visible":paused or unfocused,"reset_confirm_visible":reset_confirm_visible,"reset_error":reset_error,"muted":muted,"keyboard_release_pending":wait_for_keyboard_release,"tutorial":model.tutorial(),"upgrades":model.upgrades,"guide_visible":guide_visible,"tutorial_visible":guide_visible,"menu":menu,"selected_staff":selected_staff.duplicate(),"notice_visible":notice_remaining > 0.0,"notice_text":notice_text if notice_remaining > 0.0 else "","prefs_saved":prefs_saved}
+        var state := {"elapsed":model.elapsed,"money":model.money,"sold":model.sold,"carried":model.carried,"grill_stock":model.grill_stock,"counter_stock":model.counter_stock,"player":{"x":model.player.x,"y":model.player.y},"paused":paused or unfocused,"pause_menu_visible":paused or unfocused,"reset_confirm_visible":reset_confirm_visible,"reset_error":reset_error,"muted":muted,"keyboard_release_pending":wait_for_keyboard_release,"tutorial":model.tutorial(),"upgrades":model.upgrades,"guide_visible":guide_visible,"tutorial_visible":guide_visible and challenge == null,"menu":menu,"selected_staff":selected_staff.duplicate(),"notice_visible":notice_remaining > 0.0,"notice_text":notice_text if notice_remaining > 0.0 else "","prefs_saved":prefs_saved}
         state.merge(RushHUD.telemetry(model))
+        state.merge(_challenge_telemetry())
         JavaScriptBridge.eval("window.__burgerBoss = " + JSON.stringify(state), true)
 
 func _movement_keys_down() -> bool:
@@ -137,11 +154,14 @@ func _show_notice(message: String) -> void:
     notice_remaining = 4.0 if not message.is_empty() else 0.0
 
 func _save() -> void:
-    save_status = "Saved on this device" if SaveStore.save(model) else "Save unavailable — keep this tab open"
+    if challenge != null:
+        return
+    save_status = "Saved on this device" if SaveStore.save(career_model) else "Save unavailable — keep this tab open"
 
 func _notification(what: int) -> void:
     if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_APPLICATION_PAUSED:
         unfocused = true
+        wait_for_keyboard_release = true
         pointer = -1
         dragging = false
         if is_node_ready():
@@ -156,9 +176,14 @@ func _local(screen: Vector2) -> Vector2:
     return get_global_transform_with_canvas().affine_inverse() * screen
 
 func _input(event: InputEvent) -> void:
-    var menu_owned_input := paused or unfocused or reset_confirm_visible
+    var menu_owned_input := paused or unfocused or reset_confirm_visible or ChallengeHUD.owns_input(self)
     if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-        if reset_confirm_visible:
+        if ChallengeHUD.owns_input(self):
+            if challenge_panel == "choose":
+                _close_challenges()
+            elif challenge_panel == "abandon" or challenge_panel == "restart":
+                challenge_panel = ""
+        elif reset_confirm_visible:
             _cancel_reset()
         elif not unfocused:
             _toggle_pause()
@@ -180,9 +205,10 @@ func _input(event: InputEvent) -> void:
         get_viewport().set_input_as_handled()
 
 func _toggle_pause() -> void:
-    if reset_confirm_visible:
+    if reset_confirm_visible or ChallengeHUD.owns_input(self):
         return
     paused = not paused
+    wait_for_keyboard_release = true
     model.set_target(model.player)
     _release()
     keyboard_moving = false
@@ -190,6 +216,10 @@ func _toggle_pause() -> void:
     queue_redraw()
 
 func _open_reset() -> void:
+    if challenge != null:
+        challenge_panel = "restart"
+        _stop_input()
+        return
     paused = true
     reset_confirm_visible = true
     reset_error = ""
@@ -206,7 +236,7 @@ func _cancel_reset() -> void:
     queue_redraw()
 
 func _confirm_reset() -> void:
-    if not reset_confirm_visible:
+    if not reset_confirm_visible or challenge != null:
         return
     var fresh = SaveStore.reset_progress()
     if fresh == null:
@@ -216,6 +246,7 @@ func _confirm_reset() -> void:
         return
     # The fresh state is saved before replacing the live restaurant.
     model = fresh
+    career_model = model
     art.model = model
     menu = "upgrades"
     selected_staff = {"cook":0,"cashier":0}
@@ -241,6 +272,8 @@ func _confirm_reset() -> void:
     queue_redraw()
 
 func _press(pos: Vector2, id: int) -> void:
+    if ChallengeHUD.handle_press(self, pos):
+        return
     if PauseMenu.handle_press(self, pos):
         return
     for button in buttons:
@@ -256,7 +289,11 @@ func _press(pos: Vector2, id: int) -> void:
             "sound":
                 muted = not muted
                 _save_ui_prefs()
-            "help": _set_guide(true)
+            "help":
+                if challenge != null:
+                    _show_notice("Serve fast, protect streaks, and buy upgrades. Timer counts active play.")
+                else:
+                    _set_guide(true)
             "guide_close": _set_guide(false)
             "notice_close": notice_remaining = 0.0
             "upgrades", "staff", "expand": menu = button.id
@@ -265,7 +302,8 @@ func _press(pos: Vector2, id: int) -> void:
                     queue_redraw()
                     return
                 if not paused and not unfocused:
-                    var purchased: bool = model.buy(button.id)
+                    var purchased: bool = challenge.buy(button.id) if challenge != null else model.buy(button.id)
+                    _record_finished_challenge()
                     _show_notice(model.notice)
                     if purchased:
                         if not muted:
@@ -273,7 +311,7 @@ func _press(pos: Vector2, id: int) -> void:
                         _save()
         queue_redraw()
         return
-    var floor_top := 270.0 if guide_visible else 160.0
+    var floor_top := 270.0 if guide_visible or challenge != null else 160.0
     if paused or unfocused or pos.y < floor_top or pos.y >= 966:
         return
     pointer = id
@@ -360,7 +398,7 @@ func _draw() -> void:
     if model.upgrades.fries > 0:
         _text("Counter: %d burgers, %d fries" % [model.counter_stock, model.counter_fries], Vector2(278, 151), 16, Color("dce7d1"))
         _text("+ %d fries" % model.fries_carried, Vector2(559, 151), 17, Color("ffcf68"))
-    if guide_visible:
+    if guide_visible and challenge == null:
         _box(Rect2(20, 171, 680, 100), Color("fff7df"))
         _text("NEXT UP", Vector2(38, 192), 15, Color("a45b36"))
         var lines := _guide_lines(model.tutorial())
@@ -369,6 +407,7 @@ func _draw() -> void:
         _box(Rect2(618, 175, 82, 82), Color("e7dfc4"))
         _text("X", Vector2(651, 224), 27)
         _button("guide_close", Rect2(618, 175, 82, 82))
+    ChallengeHUD.draw_strip(self)
     RushHUD.draw(self)
     _box(Rect2(0, 966, 720, 314), Color("fff7e6"), 0)
     var tabs := [{"id":"upgrades", "title":"Upgrades"}, {"id":"staff", "title":"Hire staff"}, {"id":"expand", "title":"Expand"}]
@@ -404,3 +443,77 @@ func _draw() -> void:
     for popup in popups:
         _text(popup.text, popup.pos + Vector2(0, -popup.age * 55), 32, Color("337553"))
     PauseMenu.draw(self)
+    ChallengeHUD.draw_modal(self)
+
+
+func _stop_input() -> void:
+    _release()
+    keyboard_moving = false
+    wait_for_keyboard_release = true
+    model.set_target(model.player)
+
+func _open_challenges() -> void:
+    if challenge != null:
+        challenge_panel = "abandon"
+    else:
+        challenge_panel = "choose"
+    paused = true
+    _stop_input()
+
+func _close_challenges() -> void:
+    challenge_panel = ""
+    paused = true
+    _stop_input()
+
+func _start_challenge(mode: String) -> void:
+    _record_finished_challenge()
+    if challenge_recorded and not challenge_record_saved:
+        challenge_record_saved = ChallengeStore.record_result(challenge_records, challenge.result())
+    if challenge == null and not SaveStore.save(career_model):
+        _show_notice("Could not save career. Challenge not started; try again.")
+        save_status = "Career save failed · challenge not started"
+        challenge_panel = ""
+        return
+    challenge = ScoreChallenge.new(mode)
+    model = challenge.model
+    _swap_model()
+    challenge_recorded = false
+    challenge_record_saved = true
+    challenge_panel = ""
+    paused = false
+    save_status = "Practice run · career protected"
+
+func _return_to_career() -> void:
+    _record_finished_challenge()
+    if challenge_recorded and not challenge_record_saved:
+        challenge_record_saved = ChallengeStore.record_result(challenge_records, challenge.result())
+    challenge = null
+    challenge_recorded = false
+    model = career_model
+    _swap_model()
+    challenge_panel = ""
+    paused = true
+    save_status = "Career restored · records saved separately" if challenge_record_saved else "Career restored · challenge record save failed"
+
+func _swap_model() -> void:
+    art.model = model
+    last_sale = model.sale_serial
+    popups.clear()
+    autosave = 0.0
+    selected_staff = {"cook":0,"cashier":0}
+    menu = "upgrades"
+    _stop_input()
+    _show_notice(model.notice)
+    queue_redraw()
+
+func _challenge_telemetry() -> Dictionary:
+    var run: Dictionary = {"active":challenge != null, "panel":challenge_panel, "records":challenge_records, "record_saved":challenge_record_saved}
+    if challenge != null:
+        run.merge({"mode":challenge.mode,"score":challenge.score,"elapsed":challenge.elapsed,"remaining":challenge.remaining(),"multiplier":challenge.multiplier(),"streak":challenge.streak,"lost":challenge.lost,"finished":challenge.finished,"result":challenge.result() if challenge.finished else {}})
+    return {"challenge":run,"career":{"money":career_model.money,"sold":career_model.sold,"elapsed":career_model.elapsed,"upgrades":career_model.upgrades.duplicate(true)}}
+
+func _record_finished_challenge() -> void:
+    if challenge != null and challenge.finished and not challenge_recorded:
+        challenge_record_saved = ChallengeStore.record_result(challenge_records, challenge.result())
+        challenge_recorded = true
+        _stop_input()

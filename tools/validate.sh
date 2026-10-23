@@ -26,6 +26,9 @@ run_engine runtime --quit-after 120
 if [[ -f tests/test_restaurant.gd ]]; then
   run_engine systems --script res://tests/test_restaurant.gd
 fi
+if [[ -f tests/test_score_challenge.gd ]]; then
+  run_engine score --script res://tests/test_score_challenge.gd
+fi
 run_engine export --export-release Web public/index.html
 test -s public/index.html
 test -s public/index.wasm

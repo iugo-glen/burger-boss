@@ -2,6 +2,16 @@
 
 Scope: [issue #1](https://github.com/iugo-glen/burger-boss/issues/1), all five milestones. The implementation uses original GDScript, procedural vector art and synthesized audio, with no third-party game assets or runtime services.
 
+## Score challenges
+
+The new Challenges menu is available from Pause. Five-minute Score Attack uses a fresh restaurant, service points, a speed bonus and a streak multiplier. Fastest to max starts from the same baseline and stops when all finite upgrade categories reach their caps. Neither mode replaces career progress. The scene retains the career model, prevents challenge autosaves from reaching the career save, and returns to that model when the attempt is exited. Completed personal records use separate storage. Unfinished attempts are abandoned on reload.
+
+Scoring is (100 + up to 50 remaining-patience bonus) times the current service multiplier. Consecutive sales 1–5 use ×1, 6–10 use ×2 and 11 onward use ×3. A customer leaving resets the streak. Ordinary challenge customers have 30 seconds of patience; career customers retain their existing behavior. Medals require 8,000 / 20,000 / 35,000 points. Pausing/backgrounding stops active simulation time. The five-minute boundary is clipped exactly, and completed restaurants reject further gameplay actions.
+
+Godot 4.4.1 import, runtime and HTML5 export pass. The existing 1,407 assertions pass, and 50 new challenge assertions cover individual/multi-sale scoring, patience expiry, exact timing, frozen results, complete finite speedrun caps, record validation, best-score/time ordering, failed writes/renames and normal earned progression. One-second decision simulations scored 34,172 (manual, Silver) and 38,189 (managed, Gold); unattended play scored zero. A speedrun bought every upgrade through 147 real simulated sales in 428 active seconds with no injected money or stock. These are deterministic balance simulations, not human-play records.
+
+Browser journeys exercise challenge selection, real earned points, pause, cancellation, explicit abandonment, career preservation and reload. Mobile Chromium additionally plays a full five-minute score attempt, verifies the result and personal record, and replays. Final browser/CI evidence is recorded in the scoring pull request. Physical iPhone/iPad testing remains a device check; no account configuration changes are required for the existing GitHub Pages pipeline.
+
 ## Starting over
 
 The pause menu now exposes **Resume** and **Start over**. A separate confirmation explains that starting over erases this device's money, staff, upgrades, food and rush rank. Cancel and Escape retain progress. The dialog pauses the simulation and blocks underlying controls. Confirming writes a fresh save before replacing the active restaurant; if storage fails, the current restaurant and saved progress are retained. Saves use a temporary file followed by a checked rename rather than deleting or truncating the primary save first.
