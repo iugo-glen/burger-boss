@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import assert from 'node:assert/strict';
+import { runRushJourney } from './rush_journey.mjs';
 
 const root = resolve(process.env.WEB_ROOT || 'public');
 const types = { '.html': 'text/html', '.js': 'application/javascript', '.wasm': 'application/wasm', '.pck': 'application/octet-stream', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -47,15 +48,20 @@ try {
         };
         // All navigation and dismissal assertions use real canvas controls.
         assert.equal(initial.guide_visible,true,'fresh players see the tutorial');
+        await tap(250,311); // Optional promotion explains its fresh-save unlock.
+        await page.waitForFunction(()=>/25/.test(window.__burgerBoss.notice_text),null,{timeout:5000});
+        const lockedRush=await page.evaluate(()=>window.__burgerBoss);
+        assert.equal(lockedRush.rush.active,false,'fresh promotion stays locked');
+        assert.equal(lockedRush.money,0,'checking a promotion never costs money');
         await tap(361,1019); // Persistent, labelled Hire staff tab.
         await page.waitForFunction(()=>window.__burgerBoss.menu==='staff');
         await page.screenshot({path:`build/browser/${name}-hire-tab.png`});
-        await tap(185,1156); // Insufficient funds must produce a dismissible notice.
+        await tap(185,1113); // Insufficient funds must produce a dismissible notice.
         await page.waitForFunction(()=>window.__burgerBoss.notice_visible===true && /Need|enough/i.test(window.__burgerBoss.notice_text));
         assert.match(await page.evaluate(()=>window.__burgerBoss.notice_text),/Need|enough/i);
         await tap(656,933);
         await page.waitForFunction(()=>window.__burgerBoss.notice_visible===false);
-        await tap(185,1156); // Repeating the same message must still show it again.
+        await tap(185,1113); // Repeating the same message must still show it again.
         await page.waitForFunction(()=>window.__burgerBoss.notice_visible===true);
         await page.waitForFunction(()=>window.__burgerBoss.notice_visible===false,null,{timeout:7000});
         await tap(595,1019);
@@ -140,7 +146,7 @@ try {
           assert.ok(cash>=90,'manual serving earns enough to hire a cook');
           await tap(361,1019);
           await page.waitForFunction(()=>window.__burgerBoss.menu==='staff');
-          await tap(185,1156);
+          await tap(185,1113);
           await page.waitForFunction(()=>window.__burgerBoss.upgrades.cook===1);
           earnedHire=await page.evaluate(()=>window.__burgerBoss);
           assert.equal(earnedHire.money,cash-90,'touch hire spends the earned $90');
@@ -148,6 +154,8 @@ try {
           await tap(127,1019);
           await page.waitForFunction(()=>window.__burgerBoss.menu==='upgrades');
         }
+        const rushJourney=name==='mobile-chromium' && process.env.SMOKE_RUSH!=='0'
+          ? await runRushJourney({page,tap,name}) : null;
         const soakSeconds=Number(process.env.SMOKE_SECONDS||0);
         if(soakSeconds>0){
           // Continue performing real user input; no model state is injected.
@@ -158,7 +166,7 @@ try {
           }
           assert.ok((await page.evaluate(()=>window.__burgerBoss.sold))>restored.sold,'soak continues serving');
         }
-        reports.push({name,firstSaleSeconds:first.elapsed,restored,earnedHire,soakSeconds,final:await page.evaluate(()=>window.__burgerBoss),errors});
+        reports.push({name,firstSaleSeconds:first.elapsed,restored,earnedHire,rushJourney,soakSeconds,final:await page.evaluate(()=>window.__burgerBoss),errors});
       } else {
         await page.waitForTimeout(5000);
         reports.push({name,loaded:true,errors});
