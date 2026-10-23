@@ -2,6 +2,33 @@
 
 Scope: [issue #1](https://github.com/iugo-glen/burger-boss/issues/1), all five milestones. The implementation uses original GDScript, procedural vector art and synthesized audio, with no third-party game assets or runtime services.
 
+## Lunch-rush gameplay update
+
+The earlier restaurant became passive once staff and upgrades were purchased. This update adds a repeatable, optional 60-second promotion that brings extra customers and has three visible targets: orders, burger-and-fries combos and gold Boss-special handoffs. A special consumes real ingredients and requires the boss near that order's counter or drive-through station. Successful promotions award money and rank; targets grow with kitchen capacity and the first six ranks. Waiting customers are included when a promotion starts so a full normal queue cannot waste the timer.
+
+The boss can prepare, carry and deliver either ingredient, use an eight-second contextual boost, and give each cook or cashier a separate assignment. In Hire staff, **Next** selects a worker and the adjacent job button cycles that worker's task. Balanced cooks maintain both food supplies; dedicated jobs allow burger/fries and counter/drive-through splits. Food stocks, carried fries, active jobs, combo tickets and rush patience are visible.
+
+Failure only loses the optional bonus. Retry is free, and remaining rush orders become ordinary burger orders so calm service can recover. Existing version-2 saves migrate without resetting money, upgrades or carried food. Saves now preserve ingredients, worker jobs and mastery. Reloading an unfinished promotion explicitly cancels it without a penalty; it does not run down a hidden timer.
+
+This is one focused scenario. It does not implement a chain of restaurant locations, a campaign system or unlimited upgrades. A prepared team can make a rush easier, and the owner can choose to stay in calm service. There are no wages, compulsory maintenance tasks or reputation penalties.
+
+### Gameplay-update validation
+
+Godot **4.4.1** headless import, scene runtime, **1,385 assertions with zero failures**, and Compatibility HTML5 release export passed. The assertion count includes per-second invariants rather than 1,385 independent scenarios. The ten-minute simulation made **154 additional sales**, with at least **9 sales in each minute** and no service deadlock.
+
+The balance test compares identical snapshots with the boss away from service versus actual movement, ingredient deliveries and boosts at least ten seconds apart. Empty and fully stocked variants are both tested. Higher-tier fixtures deliberately set upgrades for controlled balance measurement; they are not evidence that progression was earned through browser play.
+
+| Restaurant | Target | Idle orders, empty / stocked | Active orders, empty / stocked |
+| --- | --- | --- | --- |
+| First rush team | 12 | 3 / 8 | 12 / 12 |
+| Middle upgrades | 18 | 12 / 12 | 19 / 19 |
+| Fully upgraded | 26 | 11 / 11 | 27 / 29 |
+| Fully upgraded, rank six | 32 | 10 / 10 | 32 / 32 |
+
+Every active variant met its combo and Boss-special targets and won using three to five boosts. Every unattended variant failed. Being present with a prepared, well-assigned team is a valid strategy; the game does not require continuous movement for its own sake.
+
+Regression checks cover exact combo ingredient consumption, no ghost payments, ineffective boosts preserving cooldown, job-driven navigation and deliveries, full ingredient-counter recovery, conservation and reload of rescue cargo, invalid save transactionality, old maxed version-2 saves, promoted full queues, patience, failed-rush recovery and interrupted-rush cancellation. Independent review reproduced and verified the cargo fixes and found no unresolved critical source defect.
+
 ## Baseline diagnosis
 
 The upstream Actions run [39893216248](https://github.com/iugo-glen/burger-boss/actions/runs/39893216248) imported and exported the prototype with Godot 4.4.1 successfully. Deployment failed in `actions/configure-pages` with `Get Pages site failed ... Not Found`. The workflow previously ran only on main, did not test pull requests, and relied on Godot exit codes without checking diagnostic output.
@@ -23,7 +50,7 @@ Local runtime setup must put Godot's XDG data/config/cache directories in writab
 | M4: polish | Original layered cartoon furniture, characters, burgers, walking/steam/payment animation, dismissible tutorial with Help, permanent Upgrades/Hire staff/Expand tabs, timed dismissible notifications, synthesized sound/mute, portrait layout, pause/focus handling, autosave and validated persistence. |
 | M5: web demo | Exact Godot 4.4.1 build/test/export pipeline, strict diagnostic checks, PR validation, web artifacts, browser automation and isolated opt-in Pages deployment. Hosted release and real iOS testing remain subject to the account/device actions above. |
 
-## Validation evidence
+## Original implementation validation evidence
 
 - The baseline build PR is [#2](https://github.com/iugo-glen/burger-boss/pull/2), with a [passing Actions run](https://github.com/iugo-glen/burger-boss/actions/runs/39894440475).
 - Integrated Godot **4.4.1** headless import, scene runtime and single-thread Compatibility HTML5 release export passed. Generated output, tooling, tests and documentation are excluded from release resources.
@@ -46,7 +73,7 @@ The game implementation is [PR #3](https://github.com/iugo-glen/burger-boss/pull
 
 ## Practical limitations
 
-This is a finite, self-contained restaurant demo. Navigation uses direct station routes across an open floor; it does not provide obstacle avoidance or a pathfinding grid. Upgrades are capped. Fries are an optional player-run station; they never block a customer's burger order. No offline income accrues while paused/backgrounded. Browser storage belongs to each origin/device, and private browsing or cleared site data can remove saves. Earlier unversioned prototype saves are unsupported and start fresh safely.
+This is a finite, self-contained restaurant demo with one repeatable lunch-rush scenario. Navigation uses direct station routes across an open floor; it does not provide obstacle avoidance or a pathfinding grid. Upgrades are capped. Combo orders consume actual burgers and fries; automatic cooks balance ingredients, or the player can assign individual workers. Rush-only Boss specials require the boss at the serving station. No offline income accrues while paused/backgrounded. Browser storage belongs to each origin/device, and private browsing or cleared site data can remove saves. Earlier unversioned prototype saves are unsupported and start fresh safely. Version-2 saves remain supported. An interrupted rush is cancelled safely on reload while earned progression and inventory are restored.
 
 The release has no external runtime services, account login, analytics, monetization or paid dependencies. Code, vector art and synthesized audio were created for this implementation. Other games informed the design only.
 
