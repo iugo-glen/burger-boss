@@ -133,7 +133,7 @@ func _draw() -> void:
     else:
         box(Rect2(72, 620, 178, 72), Color(0.35, 0.43, 0.32, 0.07))
         text("Fries station", Vector2(96, 653), 20, Color("8b9983"))
-        text("Unlock in Team", Vector2(99, 677), 16, Color("8b9983"))
+        text("Unlock in Expand", Vector2(99, 677), 16, Color("8b9983"))
     for i in range(int(model.upgrades.table)):
         var p := Vector2(171 + (i % 2) * 170, 740 + (i / 2) * 90)
         ellipse(p + Vector2(-36, 9), Vector2(18, 13), Color("719e8e"))

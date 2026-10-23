@@ -8,10 +8,11 @@ Open `project.godot` in Godot 4.4.1 and run the main scene.
 
 - Tap/click the floor to walk. Drag to steer with a virtual joystick, or use WASD/arrow keys.
 - Stand by the orange grill to cook and pick up burgers. Carry them to the blue counter and stay there to collect payment.
-- Buy upgrades at the bottom. **Team & more** contains cooks, cashiers, tables, fries and the drive-through. A cook costs $90; a cashier costs $120. All purchases use money earned in play.
+- Use the permanent bottom tabs: **Upgrades**, **Hire staff** and **Expand**. Hire staff contains cooks ($90) and cashiers ($120), with their roles explained. Expand contains tables, fries and the drive-through. All purchases use money earned in play.
 - Cooks walk between the grill and counter carrying burgers. Cashiers serve the counter and visit the drive-through when unlocked. Grill/register, movement speed, recipe value and tray upgrades change actual gameplay.
 - Fries unlock after 12 sales and add optional combo income; drive-through unlocks after 25. Tables attract more customers and provide a dining bonus.
 - Use the pause button or Escape to pause and save. Sound can be muted with SFX. Switching away pauses the simulation; there is no offline income.
+- Close the tutorial with its **X**; it stays dismissed after reloading. **Help** brings it back. Bottom notifications fade away automatically and can also be closed.
 
 Progress saves approximately every eight seconds and after purchases, pausing and losing focus. Browser saves are local to the browser, device and site origin. Private browsing or blocked storage can prevent persistence; the UI reports write failures. Keep site data to keep progress.
 
@@ -43,12 +44,9 @@ Visit `http://localhost:8000`. Opening `index.html` directly as a file does not 
 
 [GitHub Actions](https://github.com/iugo-glen/burger-boss/actions) validates pull requests and main, exports HTML5, and retains web builds and test evidence as artifacts. Download **burger-boss-web**, extract it and serve it over HTTP to review a build.
 
-**Hosted demo is pending owner setup.** The upstream deployment failed because GitHub Pages was not configured. The repository owner must:
+**[Play the hosted game](https://iugo-glen.github.io/burger-boss/).** GitHub Pages is configured with GitHub Actions as its source.
 
-1. Open **Settings → Pages**, enable Pages where supported by the private repository's account plan, and select **GitHub Actions** as the source.
-2. Merge the build PR, then the game PR into `main`.
-3. Set **Settings → Secrets and variables → Actions → Variables → PAGES_ENABLED** to `true`, or manually run the workflow on main with its deploy input selected.
-4. Use the deployment URL returned by the successful Pages job. No live demo URL is claimed before deployment succeeds.
+Merging an update into `main` automatically validates and publishes it. You can also manually run **Validate and deploy Godot web game** on main to rebuild and republish. Pull requests run validation without publishing.
 
 No repository visibility or secrets are changed by this implementation. Builds and browser tests pass independently of Pages configuration.
 

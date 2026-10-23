@@ -4,11 +4,6 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: Deploy to Pages (enable Pages with GitHub Actions source first)
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -51,8 +46,8 @@ jobs:
           path: public
   deploy:
     needs: validate
-    # Enabling Pages is an owner action; it must not prevent PR validation.
-    if: github.ref == 'refs/heads/main' && (vars.PAGES_ENABLED == 'true' || inputs.deploy == true)
+    # Pages is configured; publish main after validation, never pull requests.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write

@@ -45,6 +45,31 @@ try {
           const point=await pointAt(x,y);
           if(mobile) await page.touchscreen.tap(point.x,point.y); else await page.mouse.click(point.x,point.y);
         };
+        // All navigation and dismissal assertions use real canvas controls.
+        assert.equal(initial.guide_visible,true,'fresh players see the tutorial');
+        await tap(361,1019); // Persistent, labelled Hire staff tab.
+        await page.waitForFunction(()=>window.__burgerBoss.menu==='staff');
+        await page.screenshot({path:`build/browser/${name}-hire-tab.png`});
+        await tap(185,1156); // Insufficient funds must produce a dismissible notice.
+        await page.waitForFunction(()=>window.__burgerBoss.notice_visible===true && /Need|enough/i.test(window.__burgerBoss.notice_text));
+        assert.match(await page.evaluate(()=>window.__burgerBoss.notice_text),/Need|enough/i);
+        await tap(656,933);
+        await page.waitForFunction(()=>window.__burgerBoss.notice_visible===false);
+        await tap(185,1156); // Repeating the same message must still show it again.
+        await page.waitForFunction(()=>window.__burgerBoss.notice_visible===true);
+        await page.waitForFunction(()=>window.__burgerBoss.notice_visible===false,null,{timeout:7000});
+        await tap(595,1019);
+        await page.waitForFunction(()=>window.__burgerBoss.menu==='expand');
+        await tap(127,1019);
+        await page.waitForFunction(()=>window.__burgerBoss.menu==='upgrades');
+        await tap(660,215); // Tutorial X.
+        await page.waitForFunction(()=>window.__burgerBoss.guide_visible===false);
+        await tap(478,48); // Help restores dismissed guidance.
+        await page.waitForFunction(()=>window.__burgerBoss.guide_visible===true);
+        await tap(660,215);
+        await page.waitForFunction(()=>window.__burgerBoss.guide_visible===false);
+        await tap(660,215); // A closed guide must not leave an invisible click blocker.
+        await page.waitForFunction(x=>window.__burgerBoss.player.x>x+20,initial.player.x,{timeout:5000});
         await tap(170,430);
         await page.waitForFunction(()=>window.__burgerBoss.carried>=3,null,{timeout:20000});
         await tap(540,430);
@@ -52,7 +77,7 @@ try {
         const first=await page.evaluate(()=>window.__burgerBoss);
         assert.ok(first.elapsed<60,'first burger is served within 60 seconds');
         await page.waitForFunction(()=>window.__burgerBoss.money>=35,null,{timeout:15000});
-        await tap(595,1093); // Speed upgrade, purchased with earned cash.
+        await tap(595,1113); // Speed upgrade, purchased with earned cash.
         try { await page.waitForFunction(()=>window.__burgerBoss.upgrades.speed===1,null,{timeout:5000}); } catch(error) { console.log(await page.evaluate(()=>window.__burgerBoss)); await page.screenshot({path:`build/browser/${name}-failed.png`}); throw error; }
         const purchased=await page.evaluate(()=>window.__burgerBoss);
         await page.screenshot({path:`build/browser/${name}-played.png`});
@@ -65,6 +90,11 @@ try {
         assert.equal(restored.sold,purchased.sold,'sales survive browser reload');
         assert.equal(restored.money,purchased.money,'money survives browser reload');
         assert.equal(restored.upgrades.speed,1,'upgrade survives browser reload');
+        assert.equal(restored.guide_visible,false,'dismissed tutorial stays closed after reload');
+        await tap(478,48);
+        await page.waitForFunction(()=>window.__burgerBoss.guide_visible===true);
+        await tap(660,215);
+        await page.waitForFunction(()=>window.__burgerBoss.guide_visible===false);
         await tap(662,50);
         await page.waitForFunction(()=>window.__burgerBoss.paused===true);
         const frozen=await page.evaluate(()=>window.__burgerBoss.elapsed);
@@ -96,6 +126,28 @@ try {
           assert.ok(Math.abs((await page.evaluate(()=>window.__burgerBoss.player.x))-stopped)<3,'touch release stops movement');
           await session.detach();
         }
+        let earnedHire=null;
+        if (name==='mobile-chromium') {
+          // Earn the hire entirely through touch play, with no injected model state.
+          for (let batch=0; batch<5 && (await page.evaluate(()=>window.__burgerBoss.money))<90; batch++) {
+            await tap(170,430);
+            await page.waitForFunction(()=>window.__burgerBoss.carried>=3,null,{timeout:20000});
+            const sales=await page.evaluate(()=>window.__burgerBoss.sold);
+            await tap(540,430);
+            await page.waitForFunction(sold=>window.__burgerBoss.sold>=sold+3,sales,{timeout:20000});
+          }
+          const cash=await page.evaluate(()=>window.__burgerBoss.money);
+          assert.ok(cash>=90,'manual serving earns enough to hire a cook');
+          await tap(361,1019);
+          await page.waitForFunction(()=>window.__burgerBoss.menu==='staff');
+          await tap(185,1156);
+          await page.waitForFunction(()=>window.__burgerBoss.upgrades.cook===1);
+          earnedHire=await page.evaluate(()=>window.__burgerBoss);
+          assert.equal(earnedHire.money,cash-90,'touch hire spends the earned $90');
+          await page.screenshot({path:`build/browser/${name}-hired-cook.png`});
+          await tap(127,1019);
+          await page.waitForFunction(()=>window.__burgerBoss.menu==='upgrades');
+        }
         const soakSeconds=Number(process.env.SMOKE_SECONDS||0);
         if(soakSeconds>0){
           // Continue performing real user input; no model state is injected.
@@ -106,7 +158,7 @@ try {
           }
           assert.ok((await page.evaluate(()=>window.__burgerBoss.sold))>restored.sold,'soak continues serving');
         }
-        reports.push({name,firstSaleSeconds:first.elapsed,restored,soakSeconds,final:await page.evaluate(()=>window.__burgerBoss),errors});
+        reports.push({name,firstSaleSeconds:first.elapsed,restored,earnedHire,soakSeconds,final:await page.evaluate(()=>window.__burgerBoss),errors});
       } else {
         await page.waitForTimeout(5000);
         reports.push({name,loaded:true,errors});
