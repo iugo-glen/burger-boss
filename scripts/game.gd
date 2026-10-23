@@ -19,6 +19,7 @@ var cook_timer := 0.0
 var serve_timer := 0.0
 var arrival_timer := 0.0
 var save_timer := 0.0
+var autosave_timer := 0.0
 var finger_down := false
 var messages: Array[String] = []
 var buttons: Array[Dictionary] = []
@@ -106,6 +107,10 @@ func _process(delta: float) -> void:
             queue -= 1
             sold += 1
             money += 18 + 3 * level
+    autosave_timer += delta
+    if autosave_timer >= 10.0:
+        autosave_timer = 0.0
+        save_progress()
     queue_redraw()
 
 func _input(event: InputEvent) -> void:
