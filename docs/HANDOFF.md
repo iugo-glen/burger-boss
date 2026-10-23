@@ -10,7 +10,7 @@ Local runtime setup must put Godot's XDG data/config/cache directories in writab
 
 ## Account and device intervention
 
-- Repository owner: open **Settings → Pages**, enable Pages if available for the account's private repository plan, and select **GitHub Actions** as the build source. No repository visibility or secrets have been changed. See the README for the deployment opt-in after configuration.
+- Pages is now configured with GitHub Actions as its source, and [the hosted game is live](https://iugo-glen.github.io/burger-boss/). Successful `main` builds now publish automatically; pull requests only validate. No secrets were changed by this implementation.
 - A real iPhone/iPad running current Safari must be tested by a person with that device. Desktop browser automation and mobile viewport emulation do not prove real iOS compatibility.
 
 ## Milestones implemented
@@ -20,7 +20,7 @@ Local runtime setup must put Godot's XDG data/config/cache directories in writab
 | M1: reliable loop | WASD/arrows, tap movement and drag joystick; timed grilling, finite tray, visible burger carrying, counter deposits, arriving queues and customer payments. |
 | M2: progression | Four grills, three registers, movement/recipe/tray upgrades, tables with occupied seats, optional fries combos after 12 sales, drive-through after 25 sales. Costs, caps and locks are enforced by the simulation. |
 | M3: automation | Up to three cooks and two cashiers navigate between stations with visible job states. Cooks physically carry stock; cashiers serve arrivals and visit the drive-through. Upgrades affect their actual work rates. |
-| M4: polish | Original layered cartoon furniture, characters, burgers, walking/steam/payment animation, tutorial, two upgrade pages, synthesized sound/mute, portrait layout, pause/focus handling, autosave and validated persistence. |
+| M4: polish | Original layered cartoon furniture, characters, burgers, walking/steam/payment animation, dismissible tutorial with Help, permanent Upgrades/Hire staff/Expand tabs, timed dismissible notifications, synthesized sound/mute, portrait layout, pause/focus handling, autosave and validated persistence. |
 | M5: web demo | Exact Godot 4.4.1 build/test/export pipeline, strict diagnostic checks, PR validation, web artifacts, browser automation and isolated opt-in Pages deployment. Hosted release and real iOS testing remain subject to the account/device actions above. |
 
 ## Validation evidence
