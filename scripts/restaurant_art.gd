@@ -199,7 +199,7 @@ func _draw_orders() -> void:
     var head_burger := false
     var head_drive := false
     for customer in model.queue:
-        if customer.rush_order and model.rush.active:
+        if model.challenge_patience or (customer.rush_order and model.rush.active):
             var remaining: float = clampf(customer.patience / maxf(1, customer.max_patience), 0, 1)
             var bar_at: Vector2 = customer.position + Vector2(20, -66)
             box(Rect2(bar_at, Vector2(30, 5)), Color("c5ccb8"), 2)
@@ -223,7 +223,7 @@ func _draw_orders() -> void:
         if customer.combo:
             text("+", at + Vector2(41, icon_y - 4), 17)
             fries(at + Vector2(65, icon_y - 2), 0.55)
-        if customer.rush_order and model.rush.active:
+        if model.challenge_patience or (customer.rush_order and model.rush.active):
             var remaining: float = clampf(customer.patience / maxf(1, customer.max_patience), 0, 1)
             var width := 129.0 if special else 72.0
             var bar_y := 84 if special else 58
