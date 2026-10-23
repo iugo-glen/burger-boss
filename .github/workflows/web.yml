@@ -2,38 +2,52 @@ name: Validate and deploy Godot web game
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy to Pages (enable Pages with GitHub Actions source first)
+        type: boolean
+        default: false
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
-  group: pages
+  group: web-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  export:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Godot 4.4.1 and export templates
-        run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip
-          unzip -q Godot_v4.4.1-stable_linux.x86_64.zip
-          chmod +x Godot_v4.4.1-stable_linux.x86_64
-          mkdir -p ~/.local/share/godot/export_templates/4.4.1.stable
-          wget -q https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_export_templates.tpz
-          unzip -q Godot_v4.4.1-stable_export_templates.tpz
-          cp templates/* ~/.local/share/godot/export_templates/4.4.1.stable/
-      - name: Import and validate
-        run: |
-          ./Godot_v4.4.1-stable_linux.x86_64 --headless --path . --editor --quit
-          ./Godot_v4.4.1-stable_linux.x86_64 --headless --path . --quit-after 5
-      - name: Export
-        run: |
-          mkdir -p public
-          ./Godot_v4.4.1-stable_linux.x86_64 --headless --path . --export-release Web public/index.html
-      - uses: actions/configure-pages@v5
+      - name: Install Godot 4.4.1 and web templates
+        run: bash tools/install_godot.sh
+      - name: Import, test and export (fail on engine errors)
+        run: bash tools/validate.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: godot-logs
+          path: build/logs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: burger-boss-web
+          path: public
       - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
         with:
           path: public
+  deploy:
+    needs: validate
+    # Enabling Pages is an owner action; it must not prevent PR validation.
+    if: github.ref == 'refs/heads/main' && (vars.PAGES_ENABLED == 'true' || inputs.deploy == true)
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
       - uses: actions/deploy-pages@v4
+        id: deployment
