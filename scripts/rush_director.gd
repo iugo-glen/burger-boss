@@ -1,5 +1,5 @@
 extends RefCounted
-## Optional demand challenge; no payroll, debt, or punishment to the idle loop.
+## Optional lunch rush with career and challenge demand targets.
 var active := false
 var duration := 60.0
 var time_left := 0.0
@@ -16,9 +16,11 @@ var best := 0
 var result := "Ready"
 var reward := 0
 
-func start(upgrades: Dictionary) -> void:
+func start(upgrades: Dictionary, challenge_mode: bool = false) -> void:
     # Demand follows real kitchen capacity rather than bank balance or play time.
-    goal = 6 + int(upgrades.grill) * 2 + int(upgrades.cook) * 2 + int(upgrades.register) * 2 + mini(rank, 6)
+    goal = 6 + int(upgrades.grill) * 2 + int(upgrades.cook) * 2 + mini(rank, 6)
+    if challenge_mode:
+        goal += int(upgrades.register) * 2
     combo_goal = maxi(3, int(ceil(float(goal) * 0.4)))
     special_goal = maxi(2, int(ceil(float(goal) / 4.0)))
     specials = 0

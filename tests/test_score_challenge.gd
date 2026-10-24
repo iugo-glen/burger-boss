@@ -55,11 +55,16 @@ func test_scoring() -> void:
     rush_run.model.upgrades.fries = 1
     rush_run.model.queue[0].patience = 10.0
     expect(rush_run.start_rush() and rush_run.model.queue[0].patience == 10.0, "Rush promotion preserves challenge wait time")
+    expect(rush_run.model.rush.goal == 12, "Challenge rush retains its original register-dependent target")
+    var mature := Challenge.new()
+    mature.model.sold = 300
+    mature.model.upgrades.table = 4
+    expect(is_equal_approx(mature.model.calm_arrival_gap(), 2.22) and mature.model.queue_capacity() == 12 and mature.model.calm_patience() == 30.0, "Mature challenges retain original demand, capacity and patience")
     rush_run.step(0.1)
     expect(is_equal_approx(rush_run.model.queue[0].patience, 9.9), "Rush patience advances once per challenge tick")
     var career := Restaurant.new()
     career.step(40)
-    expect(career.queue.size() >= 3, "Career ordinary queue keeps existing infinite patience")
+    expect(career.lost == 0 and career.queue.size() >= 3, "Generous career patience retains customers through forty unattended seconds")
     var dual := Challenge.new()
     dual.model.queue.clear()
     dual.model.upgrades.drive = 1
@@ -210,6 +215,7 @@ func test_balance() -> void:
             run.step(0.1)
         print("Balance %s: score=%d served=%d lost=%d medal=%s" % [skill,run.score,run.model.sold,run.lost,run.medal()])
         expect(run.finished and run.score > idle.score, "Active %s strategy beats unattended" % skill)
+        expect(run.score == (34172 if skill == "manual" else 38189), "Career tuning preserves exact %s challenge score" % skill)
 
 func test_natural_speedrun() -> void:
     var run := Challenge.new("speedrun")
@@ -232,5 +238,6 @@ func test_natural_speedrun() -> void:
         if run.finished:
             break
     print("Balance natural speedrun: completed=%s seconds=%.1f served=%d" % [run.finished,run.elapsed,run.model.sold])
+    expect(is_equal_approx(run.elapsed, 428.0) and run.model.sold == 147, "Career tuning preserves exact 428-second, 147-sale speedrun")
     expect(run.finished and run.elapsed <= 600.0 and run.all_upgrades_maxed(), "Natural earnings can purchase all finite upgrades within ten active minutes")
     expect(run.model.sold > 100 and run.model.staff.size() == 5 and run.model.upgrades.fries == 1 and run.model.upgrades.drive == 1, "Natural speedrun earns sales and completes staff, sides and drive-through")

@@ -47,6 +47,7 @@ var telemetry_timer := 0.0
 var keyboard_moving := false
 var wait_for_keyboard_release := false
 var popups: Array[Dictionary] = []
+var presentation_model: RefCounted
 
 func _ready() -> void:
     SaveStore.load_into(model)
@@ -56,7 +57,7 @@ func _ready() -> void:
     _show_notice(model.notice)
     last_sale = model.sale_serial
     art = Art.new()
-    art.model = model
+    _bind_presentation_model()
     add_child(art)
     sound = Sound.new()
     add_child(sound)
@@ -94,6 +95,7 @@ func _process(delta: float) -> void:
             _record_finished_challenge()
         else:
             model.step(minf(delta, 0.1))
+        art.step_departures(minf(delta, 0.1))
         if model.sale_serial != last_sale:
             last_sale = model.sale_serial
             popups.append({"pos":Vector2(540, 330), "age":0.0, "text":"+$%d" % model.last_earned})
@@ -116,6 +118,7 @@ func _process(delta: float) -> void:
         telemetry_timer = 0.0
         var state := {"elapsed":model.elapsed,"money":model.money,"sold":model.sold,"carried":model.carried,"grill_stock":model.grill_stock,"counter_stock":model.counter_stock,"player":{"x":model.player.x,"y":model.player.y},"paused":paused or unfocused,"pause_menu_visible":paused or unfocused,"reset_confirm_visible":reset_confirm_visible,"reset_error":reset_error,"muted":muted,"keyboard_release_pending":wait_for_keyboard_release,"tutorial":model.tutorial(),"upgrades":model.upgrades,"guide_visible":guide_visible,"tutorial_visible":guide_visible and challenge == null,"menu":menu,"selected_staff":selected_staff.duplicate(),"notice_visible":notice_remaining > 0.0,"notice_text":notice_text if notice_remaining > 0.0 else "","prefs_saved":prefs_saved}
         state.merge(RushHUD.telemetry(model))
+        state["departing_customers"] = art.departure_telemetry()
         state.merge(_challenge_telemetry())
         JavaScriptBridge.eval("window.__burgerBoss = " + JSON.stringify(state), true)
 
@@ -156,7 +159,7 @@ func _show_notice(message: String) -> void:
 func _save() -> void:
     if challenge != null:
         return
-    save_status = "Saved on this device" if SaveStore.save(career_model) else "Save unavailable — keep this tab open"
+    save_status = "Saved on this device" if SaveStore.save(career_model) else "Save unavailable: keep this tab open"
 
 func _notification(what: int) -> void:
     if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_APPLICATION_PAUSED:
@@ -247,7 +250,7 @@ func _confirm_reset() -> void:
     # The fresh state is saved before replacing the live restaurant.
     model = fresh
     career_model = model
-    art.model = model
+    _bind_presentation_model()
     menu = "upgrades"
     selected_staff = {"cook":0,"cashier":0}
     popups.clear()
@@ -398,6 +401,8 @@ func _draw() -> void:
     if model.upgrades.fries > 0:
         _text("Counter: %d burgers, %d fries" % [model.counter_stock, model.counter_fries], Vector2(278, 151), 16, Color("dce7d1"))
         _text("+ %d fries" % model.fries_carried, Vector2(559, 151), 17, Color("ffcf68"))
+    if challenge == null:
+        _text("%d left hungry" % model.lost, Vector2(278, 101), 16, Color("ffcf68"))
     if guide_visible and challenge == null:
         _box(Rect2(20, 171, 680, 100), Color("fff7df"))
         _text("NEXT UP", Vector2(38, 192), 15, Color("a45b36"))
@@ -434,6 +439,8 @@ func _draw() -> void:
         _box(Rect2(620, 888, 72, 78), Color("2e5850"))
         _text("X", Vector2(645, 937), 26, Color.WHITE)
         _button("notice_close", Rect2(618, 884, 82, 82))
+    elif challenge == null:
+        _fit_text("Calm demand %d/min · Queue %d/%d · Watch the patience bars" % [roundi(model.calm_arrivals_per_minute()), model.queue.size(), model.queue_capacity()], Vector2(30, 956), 660, 18, Color("3c5c50"))
     elif guide_visible:
         _text("Tap to walk • drag to steer • WASD / arrows", Vector2(115, 956), 20, Color("547064"))
     if pointer >= 0 and dragging:
@@ -496,7 +503,7 @@ func _return_to_career() -> void:
     save_status = "Career restored · records saved separately" if challenge_record_saved else "Career restored · challenge record save failed"
 
 func _swap_model() -> void:
-    art.model = model
+    _bind_presentation_model()
     last_sale = model.sale_serial
     popups.clear()
     autosave = 0.0
@@ -517,3 +524,19 @@ func _record_finished_challenge() -> void:
         challenge_record_saved = ChallengeStore.record_result(challenge_records, challenge.result())
         challenge_recorded = true
         _stop_input()
+
+# Effects are presentation only: the model removes abandoned orders immediately.
+# Rebinding also clears ghosts when starting/restarting a challenge or resetting.
+func _bind_presentation_model() -> void:
+    if presentation_model != null and presentation_model.customer_abandoned.is_connected(_present_departure):
+        presentation_model.customer_abandoned.disconnect(_present_departure)
+    presentation_model = model
+    presentation_model.customer_abandoned.connect(_present_departure)
+    art.model = model
+    art.departures.clear()
+
+func _present_departure(customer: Dictionary) -> void:
+    if model.challenge_patience:
+        return
+    art.present_departure(customer)
+    _show_notice("A customer left hungry" if not customer.rush_order else "A rush customer left hungry")
